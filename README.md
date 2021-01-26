@@ -1,29 +1,15 @@
-# ThRasE
+# ArrNorm
 
-![](docs/img/thrase.svg)
-
-ThRasE is a Thematic Raster Editor plugin of Qgis, it uses a recode pixel table to modify several classes at the same time using pixels, lines or polygons tools. The plugin has a navigation tool to guarantee the revision of the thematic raster.
-
-![](docs/img/editing_min.gif)
-
-Read more in: [https://smbyc.github.io/ThRasE](https://smbyc.github.io/ThRasE)
-
-## Installation
-
-The plugin can be installed using the QGIS Plugin Manager, go into Qgis to `Plugins` menu and `Manage and install plugins`, in `All` section search for `ThRasE`.
-
-The plugin will be available in the `Plugins` menu and `Plugins toolbar`.
+It is a Qgis processing for apply the radiometric normalization to the target image based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization
 
 ## Source code
 
 The official version control system repository of the plugin:
-[https://github.com/SMByC/ThRasE](https://github.com/SMByC/ThRasE)
-
-The home plugin in plugins.qgis.org: [https://plugins.qgis.org/plugins/ThRasE/](https://plugins.qgis.org/plugins/ThRasE/)
+[https://github.com/SMByC/ArrNorm-Qgis-processing](https://github.com/SMByC/ArrNorm-Qgis-processing)
 
 ## Issue Tracker
 
-Issues, ideas and enhancements: [https://github.com/SMByC/ThRasE/issues](https://github.com/SMByC/ThRasE/issues)
+Issues, ideas and enhancements: [https://github.com/SMByC/ArrNorm-Qgis-processing/issues](https://github.com/SMByC/ArrNorm-Qgis-processing/issues)
 
 ## About us
 
