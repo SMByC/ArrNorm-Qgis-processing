@@ -19,8 +19,9 @@
  ***************************************************************************/
 """
 import os
+import platform
 import sys
-from subprocess import call
+import subprocess
 
 from qgis.core import QgsProcessingException
 
@@ -129,14 +130,13 @@ class Normalization:
                                          filename + "_" + os.path.splitext(os.path.basename(self.img_target))[0]
                                          + "_clip" + ext)
 
-        return_code = call(
-            'gdal_translate -projwin ' + ' '.join([str(x) for x in [minx, maxy, maxx, miny]]) +
-            ' -of GTiff "' + self.img_ref + '" "' + self.img_ref_clip + '"',
-            shell=True)
-        if return_code == 0:  # successfully
+        cmd = 'gdal_translate -projwin ' + ' '.join([str(x) for x in [minx, maxy, maxx, miny]]) + \
+              ' -of GTiff "' + self.img_ref + '" "' + self.img_ref_clip + '"'
+        cmd_out = subprocess.run(cmd, shell=True)
+        if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Clipped ref image successfully: ' + os.path.basename(self.img_ref_clip))
         else:
-            raise QgsProcessingException('\nError clipping reference image: ' + str(return_code))
+            raise QgsProcessingException('\nError clipping reference image: ' + str(cmd_out.returncode))
 
     def imad(self):
         # ======================================
@@ -163,14 +163,14 @@ class Normalization:
 
         self.feedback.pushInfo('\nConverting negative values for\n' +
               os.path.basename(os.path.basename(image)))
-        return_code = call(
-            'gdal_calc.py -A "' + image + '" --outfile="' + image + '" --type=UInt16 --calc="A*(A>=0)" --NoDataValue=0'
-                                                                    ' --allBands=A  --overwrite --quiet',
-            shell=True)
-        if return_code == 0:  # successfully
+        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '--overwrite',
+               '--calc', '"A*(A>=0)"', ' --allBands=A', '--NoDataValue=0', '--type=UInt16', '--quiet',
+               '--outfile', '"{}"'.format(image)]
+        cmd_out = subprocess.run(" ".join(cmd), shell=True)
+        if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Negative values converted successfully: ' + os.path.basename(image))
         else:
-            raise QgsProcessingException('\nError converting values: ' + str(return_code))
+            raise QgsProcessingException('\nError converting values: ' + str(cmd_out.returncode))
 
     def make_mask(self):
         # ======================================
@@ -183,14 +183,14 @@ class Normalization:
 
         filename, ext = os.path.splitext(os.path.basename(img_to_process))
         self.mask_file = os.path.join(os.path.dirname(os.path.abspath(img_to_process)), filename + "_mask" + ext)
-        return_code = call(
-            'gdal_calc.py -A "' + img_to_process + '" --type=Byte --co COMPRESS=PACKBITS --outfile="'
-            + self.mask_file + '" --calc="1*(A>0)" --NoDataValue=0 --quiet',
-            shell=True)
-        if return_code == 0:  # successfully
+        cmd = 'gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py' + ' -A "' + img_to_process + \
+              '" --type=Byte --co COMPRESS=PACKBITS --outfile="' \
+              + self.mask_file + '" --calc="1*(A>0)" --NoDataValue=0 --quiet'
+        cmd_out = subprocess.run(cmd, shell=True)
+        if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
         else:
-            raise QgsProcessingException('\nError creating mask: ' + str(return_code))
+            raise QgsProcessingException('\nError creating mask: ' + str(cmd_out.returncode))
 
     def apply_mask(self):
         # ======================================
@@ -198,14 +198,14 @@ class Normalization:
 
         self.feedback.pushInfo('\nApplying mask for\n' +
               os.path.basename(self.img_target) + " " + os.path.basename(self.img_norm))
-        return_code = call(
-            'gdal_calc.py -A "' + self.img_norm + '" -B "' + self.mask_file + '" --type=UInt16 --co COMPRESS=LZW --co PREDICTOR=2 TILED=YES --outfile="'
-            + self.img_norm + '" --calc="A*(B==1)" --NoDataValue=0  --allBands=A  --overwrite --quiet',
-            shell=True)
-        if return_code == 0:  # successfully
+        cmd = 'gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py' + ' -A "' + self.img_norm + '" -B "' + \
+              self.mask_file + '" --type=UInt16 --co COMPRESS=LZW --co PREDICTOR=2 TILED=YES --outfile="' + \
+              self.img_norm + '" --calc="A*(B==1)" --NoDataValue=0  --allBands=A  --overwrite --quiet'
+        cmd_out = subprocess.run(cmd, shell=True)
+        if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
         else:
-            raise QgsProcessingException('\nError applied mask: ' + str(return_code))
+            raise QgsProcessingException('\nError applied mask: ' + str(cmd_out.returncode))
 
     def clean(self):
         # delete the MAD file
