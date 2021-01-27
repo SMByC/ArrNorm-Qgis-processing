@@ -50,12 +50,13 @@ IDEAM, Colombia
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, nodata_mask, output, feedback):
+    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
         self.prob_thres = prob_thres
         self.nodata_mask = nodata_mask
+        self.neg_to_nodata = neg_to_nodata
         self.output = output
         self.feedback = feedback
 
@@ -78,10 +79,9 @@ class Normalization:
         if self.feedback.isCanceled():
             return
 
-        self.feedback.setProgress(80)
-        self.no_negative_value(self.img_norm)
-        if self.feedback.isCanceled():
-            return
+        if self.neg_to_nodata:
+            self.feedback.setProgress(80)
+            self.no_negative_value(self.img_norm)
 
         if self.nodata_mask:
             self.feedback.setProgress(90)
@@ -163,8 +163,8 @@ class Normalization:
 
         self.feedback.pushInfo('\nConverting negative values for\n' +
               os.path.basename(os.path.basename(image)))
-        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '--overwrite',
-               '--calc', '"A*(A>=0)"', ' --allBands=A', '--NoDataValue=0', '--type=UInt16', '--quiet',
+        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
+               '--overwrite', '--calc', '"A*(A>=0)"', '--allBands=A', '--NoDataValue=0', '--type=UInt16', '--quiet',
                '--outfile', '"{}"'.format(image)]
         cmd_out = subprocess.run(" ".join(cmd), shell=True)
         if cmd_out.returncode == 0:  # successfully

@@ -42,6 +42,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
     IMG_REF = 'IMG_REF'
     MAX_ITERS = 'MAX_ITERS'
     PROB_THRES = 'PROB_THRES'
+    NEG_TO_NODATA = 'NEG_TO_NODATA'
     NODATA_MASK = 'NODATA_MASK'
     IMG_TARGET = 'IMG_TARGET'
     OUTPUT = 'OUTPUT'
@@ -134,6 +135,16 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
 
         parameter = \
             QgsProcessingParameterBoolean(
+                self.NEG_TO_NODATA,
+                self.tr('Convert all negative values to NoData'),
+                defaultValue=True,
+                optional=True
+            )
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(parameter)
+
+        parameter = \
+            QgsProcessingParameterBoolean(
                 self.NODATA_MASK,
                 self.tr('Create and apply nodata mask'),
                 defaultValue=False,
@@ -164,6 +175,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
             max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context),
             prob_thres= self.parameterAsDouble(parameters, self.PROB_THRES, context),
+            neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
             nodata_mask=self.parameterAsBoolean(parameters, self.NODATA_MASK, context),
             output=output_file,
             feedback=feedback)
