@@ -98,8 +98,8 @@ class Normalization:
 
     def clipper(self):
         """Clip the reference image with the target image"""
-        import gdal
-        from gdalconst import GA_ReadOnly
+        from osgeo import gdal
+        from osgeo.gdalconst import GA_ReadOnly
 
         gdal_file = gdal.Open(self.img_target, GA_ReadOnly)
 
