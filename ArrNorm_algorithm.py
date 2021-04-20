@@ -47,8 +47,16 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
     IMG_TARGET = 'IMG_TARGET'
     OUTPUT = 'OUTPUT'
 
-    def tr(self, string):
-        return QCoreApplication.translate('Processing', string)
+    def __init__(self):
+        super().__init__()
+
+    def tr(self, string, context=''):
+        if context == '':
+            context = self.__class__.__name__
+        return QCoreApplication.translate(context, string)
+
+    def shortHelpString(self):
+        return None
 
     def createInstance(self):
         return ArrNormAlgorithm()
