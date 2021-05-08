@@ -155,7 +155,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterBoolean(
                 self.NODATA_MASK,
                 self.tr('Create and apply nodata mask'),
-                defaultValue=False,
+                defaultValue=True,
                 optional=True
             )
         parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
