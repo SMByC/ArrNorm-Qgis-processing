@@ -205,10 +205,12 @@ class Normalization:
 
         filename, ext = os.path.splitext(os.path.basename(img_to_process))
         self.mask_file = os.path.join(os.path.dirname(os.path.abspath(img_to_process)), filename + "_mask" + ext)
-        cmd = 'gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py' + ' -A "' + img_to_process + \
-              '" --type=Byte --co COMPRESS=PACKBITS --outfile="' \
-              + self.mask_file + '" --calc="1*(A>0)" --NoDataValue=0 --quiet'
-        cmd_out = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(img_to_process),
+               '--overwrite', '--calc', '"1*(A>0)"', '--type=Byte', '--NoDataValue=0', '--co', 'COMPRESS=PACKBITS',
+               '--quiet', '--outfile', '"{}"'.format(self.mask_file)]
+        cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
         if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
         else:
@@ -224,10 +226,13 @@ class Normalization:
 
         self.feedback.pushInfo('\nApplying mask for\n' +
               os.path.basename(self.img_target) + " " + os.path.basename(image))
-        cmd = 'gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py' + ' -A "' + image + '" -B "' + \
-              self.mask_file + '" --type=UInt16 --co COMPRESS=LZW --co PREDICTOR=2 TILED=YES --outfile="' + \
-              self.norm_masked + '" --calc="A*(B==1)" --NoDataValue=0  --allBands=A  --overwrite --quiet'
-        cmd_out = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
+               '-B', '"{}"'.format(self.mask_file), '--overwrite', '--calc', '"A*(B==1)"', '--type=UInt16',
+               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2', 'TILED=YES',
+               '--quiet', '--allBands=A', '--outfile', '"{}"'.format(self.norm_masked)]
+        cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
         if cmd_out.returncode == 0:  # successfully
             self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
         else:
