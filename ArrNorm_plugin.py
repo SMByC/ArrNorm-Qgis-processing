@@ -20,6 +20,7 @@
 """
 
 import os
+import platform
 import sys
 import inspect
 
@@ -46,4 +47,15 @@ class ArrNormPlugin:
         self.initProcessing()
 
     def unload(self):
+        # unload dll
+        if platform.system() == 'Windows':
+            from ArrNorm.core.auxil.auxil import lib
+            import ctypes
+            try:
+                ctypes.windll.kernel32.FreeLibrary.argtypes = [ctypes.wintypes.HMODULE]
+                ctypes.windll.kernel32.FreeLibrary(lib._handle)
+                del lib
+            except:
+                pass
+
         QgsApplication.processingRegistry().removeProvider(self.provider)
