@@ -107,7 +107,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterRasterLayer(
                 self.IMG_REF,
-                self.tr('The reference image'),
+                self.tr('The REFERENCE image:'),
                 optional=False
             )
         )
@@ -115,7 +115,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterRasterLayer(
                 self.IMG_TARGET,
-                self.tr('The target image')
+                self.tr('The TARGET image to normalize:')
             )
         )
 
