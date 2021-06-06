@@ -51,14 +51,14 @@ IDEAM, Colombia
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output, feedback):
+    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output_file, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
         self.prob_thres = prob_thres
         self.nodata_mask = nodata_mask
         self.neg_to_nodata = neg_to_nodata
-        self.output = output
+        self.output_file = output_file
         self.feedback = feedback
 
         self.img_norm = None
@@ -95,11 +95,11 @@ class Normalization:
 
         # finish
         if self.norm_masked:
-            shutil.move(self.norm_masked, self.output)
+            shutil.move(self.norm_masked, self.output_file)
         elif self.no_neg:
-            shutil.move(self.no_neg, self.output)
+            shutil.move(self.no_neg, self.output_file)
         else:
-            shutil.move(self.img_norm, self.output)
+            shutil.move(self.img_norm, self.output_file)
 
         self.clean()
 
@@ -203,8 +203,8 @@ class Normalization:
         self.feedback.pushInfo('\nMaking mask for\n' +
               os.path.basename(self.img_target) + " " + os.path.basename(img_to_process))
 
-        filename, ext = os.path.splitext(os.path.basename(img_to_process))
-        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(img_to_process)), filename + "_mask" + ext)
+        filename, ext = os.path.splitext(os.path.basename(self.output_file))
+        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_mask" + ext)
 
         cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(img_to_process),
                '--overwrite', '--calc', '"1*(A>0)"', '--type=Byte', '--NoDataValue=0', '--co', 'COMPRESS=PACKBITS',

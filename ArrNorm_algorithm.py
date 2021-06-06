@@ -185,7 +185,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             prob_thres= self.parameterAsDouble(parameters, self.PROB_THRES, context),
             neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
             nodata_mask=self.parameterAsBoolean(parameters, self.NODATA_MASK, context),
-            output=output_file,
+            output_file=output_file,
             feedback=feedback)
 
         arrnorm.run()
