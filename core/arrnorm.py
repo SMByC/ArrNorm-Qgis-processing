@@ -204,7 +204,7 @@ class Normalization:
               os.path.basename(self.img_target) + " " + os.path.basename(img_to_process))
 
         filename, ext = os.path.splitext(os.path.basename(self.output_file))
-        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_mask" + ext)
+        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
 
         cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(img_to_process),
                '--overwrite', '--calc', '"1*(A>0)"', '--type=Byte', '--NoDataValue=0', '--co', 'COMPRESS=PACKBITS',

@@ -164,7 +164,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterRasterDestination(
                 self.OUTPUT,
-                self.tr('Output raster normalized')
+                self.tr('Output raster file normalized')
             )
         )
 
