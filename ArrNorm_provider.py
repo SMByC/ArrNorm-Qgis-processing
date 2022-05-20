@@ -5,7 +5,7 @@
                           A QGIS plugin processing
  Automatic relative radiometric normalization
                               -------------------
-        copyright            : (C) 2021 by Xavier Corredor Llano, SMByC
+        copyright            : (C) 2021-2022 by Xavier Corredor Llano, SMByC
         email                : xavier.corredor.llano@gmail.com
  ***************************************************************************/
 

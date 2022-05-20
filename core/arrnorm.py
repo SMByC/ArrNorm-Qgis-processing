@@ -5,7 +5,7 @@
                           A QGIS plugin processing
  Automatic relative radiometric normalization
                               -------------------
-        copyright            : (C) 2021 by Xavier Corredor Llano, SMByC
+        copyright            : (C) 2021-2022 by Xavier Corredor Llano, SMByC
         email                : xavier.corredor.llano@gmail.com
  ***************************************************************************/
 
@@ -32,22 +32,6 @@ if project_dir not in sys.path:
     sys.path.append(project_dir)
 
 from ArrNorm.core import iMad, radcal
-
-header = '''
-==============================================================
-
-ArrNorm - Automatic Relative Radiometric Normalization
-
-Some code base on: Dr. Mort Canty
-                   https://github.com/mortcanty/CRCDocker
-
-Copyright (c) 2016 SMBYC-IDEAM
-Authors: Xavier Corredor Llano <xcorredorl@ideam.gov.co>
-Sistema de Monitoreo de Bosques y Carbono - SMBYC
-IDEAM, Colombia
-
-==============================================================
-'''
 
 
 class Normalization:
@@ -229,8 +213,8 @@ class Normalization:
 
         cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
                '-B', '"{}"'.format(self.mask_file), '--overwrite', '--calc', '"A*(B==1)"', '--type=UInt16',
-               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2',
-               '--quiet', '--allBands=A', '--outfile', '"{}"'.format(self.norm_masked)]
+               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2', '--quiet', '--allBands=A',
+               '--outfile', '"{}"'.format(self.norm_masked)]
         cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         if cmd_out.returncode == 0:  # successfully
