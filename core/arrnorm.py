@@ -229,7 +229,7 @@ class Normalization:
 
         cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
                '-B', '"{}"'.format(self.mask_file), '--overwrite', '--calc', '"A*(B==1)"', '--type=UInt16',
-               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2', 'TILED=YES',
+               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2',
                '--quiet', '--allBands=A', '--outfile', '"{}"'.format(self.norm_masked)]
         cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
