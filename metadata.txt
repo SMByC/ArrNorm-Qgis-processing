@@ -1,32 +1,25 @@
-# This file contains metadata for your plugin.
-
-# This file should be included when you package your plugin.# Mandatory items:
-
 [general]
 name=ArrNorm
-description=Apply the automatic relative radiometric normalization to the target image based on reference image using the IR-MAD algorithm to locate invariant/variant pixels
-about=It is a Qgis processing for apply the radiometric normalization to the target image based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization
+description=Apply the automatic relative radiometric normalization to the target image based on reference image using
+    the IR-MAD algorithm
+about=ArrNorm is a Qgis processing plugin for apply the radiometric normalization to the target image based on reference
+    image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization
 
-version=21.6.5
+version=22.5.20
 qgisMinimumVersion=3.0
 qgisMaximumVersion=3.99
 
 author=Xavier Corredor Llano, SMByC
 email=xcorredorl@ideam.gov.co
 
-homepage=https://smbyc.github.io/ArrNorm-Qgis-processing
+homepage=https://github.com/SMByC/ArrNorm-Qgis-processing
 tracker=https://github.com/SMByC/ArrNorm-Qgis-processing/issues
 repository=https://github.com/SMByC/ArrNorm-Qgis-processing
 
 changelog=
-    21.6.5:
-    - Others minor changes
-    - Highlight the text for reference and target input files
 
 tags=raster,processing,normalization
-
 external_deps=
-
 category=Analysis
 icon=icons/arrnorm.svg
 experimental=False
