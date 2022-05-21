@@ -72,7 +72,6 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     referenceroot, targetbasename = root[b + 1:err].split('&')
     referencefn = path + '/' + referenceroot + ext
     targetfn = path + '/' + targetbasename
-    targetroot, targetext = os.path.splitext(targetbasename)
     outfn = output
     imadDataset = gdal.Open(img_imad, GA_ReadOnly)
     try:
