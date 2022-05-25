@@ -124,7 +124,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
     feedback.pushInfo('\nStop condition: max iteration {iter} with auto selection\n'
                       'the best delta for the final result:'.format(iter=max_iters))
 
-    feedback.pushInfo(' {img_target} -> iteration: 0, delta: 1.0'.format(img_target=os.path.basename(img_target)))
+    feedback.pushInfo(' -> iteration: 0, delta: 1.0')
 
     while current_iter < max_iters:
         if feedback.isCanceled():
@@ -203,9 +203,9 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
             B = B * np.diag(cov / np.abs(cov))
             current_iter += 1
 
-            feedback.pushInfo(' {img_target} -> iteration: {iter}, delta: {delta}'.format(
-                img_target=os.path.basename(img_target), iter=current_iter, delta=round(delta, 6)))
-            feedback.setProgress(feedback.progress() + 2)
+            feedback.pushInfo(' -> iteration: {iter}, delta: {delta}'.format(
+                iter=current_iter, delta=round(delta, 6)))
+            feedback.setProgress(feedback.progress() + 90/max_iters)
 
             # save parameters
             results.append((delta, {"iter": current_iter, "A": A, "B": B, "means1": means1, "means2": means2,

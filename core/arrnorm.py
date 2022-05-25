@@ -57,17 +57,17 @@ class Normalization:
         if self.feedback.isCanceled():
             return
 
-        self.feedback.setProgress(70)
+        self.feedback.setProgress(90)
         self.radcal()
         if self.feedback.isCanceled():
             return
 
         if self.neg_to_nodata:
-            self.feedback.setProgress(80)
+            self.feedback.setProgress(93)
             self.no_negative_value(self.img_norm)
 
         if self.nodata_mask:
-            self.feedback.setProgress(90)
+            self.feedback.setProgress(97)
             self.make_mask()
             self.apply_mask(self.no_neg if self.no_neg else self.img_norm)
 
