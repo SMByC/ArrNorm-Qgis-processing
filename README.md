@@ -11,7 +11,7 @@ Stop condition is set by max iteration or with a minimum no-change probability t
 
 ![](docs/img/example.jpg)
 
-<figcaption align = "center">Fig.1 - Example of a Landsat image normalization, using a multi-year average (reference) to normalize a scene. Some remote sensing imagery pixel values are affected by different causes such as: sensor angle, sun position, clouds and seasons.</figcaption>
+<figcaption>Fig.1 - Example of a Landsat image normalization, using a multi-year average (reference) to normalize a scene. Those pixel changes are because, some remote sensing imagery pixel values are affected by different causes such as: sensor angle, sun position, clouds and seasons. Be sure that you are using the same 'style' for all layers in Qgis (use copy/paste style for that) to visualize and check the normalization visually.</figcaption>
 
 ---
 
