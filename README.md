@@ -9,6 +9,12 @@ Stop condition is set by max iteration or with a minimum no-change probability t
 
 [1] M. J. Canty (2014): Image Analysis, Classification and Change Detection in Remote Sensing, with Algorithms for ENVI/IDL and Python (Third Revised Edition), Taylor and Francis CRC Press.
 
+![](docs/img/example.jpg)
+
+<figcaption align = "center">Fig.1 - Example of a Landsat image normalization, using a multi-year average (reference) to normalize a scene. Some remote sensing imagery pixel values are affected by different causes such as: sensor angle, sun position, clouds and seasons.</figcaption>
+
+> *Note:* For uninstall/update this plugin Windows, due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
+
 ## Source code
 
 The official version control system repository of the plugin:
