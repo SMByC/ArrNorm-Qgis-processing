@@ -36,11 +36,10 @@ if cmd_folder not in sys.path:
 class ArrNormPlugin:
 
     def __init__(self):
-        self.provider = None
+        self.provider = ArrNormProvider()
 
     def initProcessing(self):
         """Init Processing provider for QGIS >= 3.8."""
-        self.provider = ArrNormProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
     def initGui(self):
