@@ -39,6 +39,7 @@ class Normalization:
         self.output_file = output_file
         self.feedback = feedback
 
+        self.img_imad = None
         self.img_norm = None
         self.no_neg = None
         self.norm_masked = None
@@ -219,7 +220,7 @@ class Normalization:
 
     def clean(self):
         # delete the MAD file
-        os.remove(self.img_imad) if os.path.exists(self.img_imad) else None
+        os.remove(self.img_imad) if self.img_imad and os.path.exists(self.img_imad) else None
         # delete the clip reference image
         if self.img_ref_clip != self.img_ref:
             os.remove(self.img_ref_clip) if os.path.exists(self.img_ref_clip) else None
