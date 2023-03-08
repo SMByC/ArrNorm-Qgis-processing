@@ -123,14 +123,12 @@ class Normalization:
                                          filename + "_" + os.path.splitext(os.path.basename(self.img_target))[0]
                                          + "_clip" + ext)
 
-        cmd = 'gdal_translate -projwin ' + ' '.join([str(x) for x in [minx, maxy, maxx, miny]]) + \
-              ' -of GTiff "' + self.img_ref + '" "' + self.img_ref_clip + '"'
-        cmd_out = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if cmd_out.returncode == 0:  # successfully
+        try:
+            gdal.Translate(self.img_ref_clip, self.img_ref, projWin=[minx, maxy, maxx, miny], format='GTiff')
             self.feedback.pushInfo('Clipped ref image successfully: ' + os.path.basename(self.img_ref_clip))
-        else:
+        except Exception as e:
             self.clean()
-            raise QgsProcessingException('\nError clipping reference image: ' + str(cmd_out.stderr.decode()))
+            raise QgsProcessingException('\nError clipping reference image: ' + str(e))
 
     def imad(self):
         # ======================================
