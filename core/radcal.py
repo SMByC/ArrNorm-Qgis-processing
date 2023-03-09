@@ -56,7 +56,7 @@ Note that, for ENVI format, ext is the empty string.
 -------------------------------------------------------'''
 
 
-def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None, graphics=False):
+def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None, graphics=False, out_dtype=None):
 
     if img_target is not None:
         path = os.path.dirname(img_target)
@@ -100,7 +100,7 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     print('no-change pixels: ' + str(len(idx[0])))
     start = time.time()
     driver = targetDataset.GetDriver()
-    outDataset = driver.Create(outfn, cols, rows, len(pos), GDT_UInt16)
+    outDataset = driver.Create(outfn, cols, rows, len(pos), out_dtype)
     projection = imadDataset.GetProjection()
     geotransform = imadDataset.GetGeoTransform()
     if geotransform is not None:
@@ -151,7 +151,7 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
             print('Error %s  -- Image could not be read in')
             sys.exit(1)
         driver = fsDataset.GetDriver()
-        outDataset = driver.Create(fsoutfn, cols, rows, len(pos), GDT_UInt16)
+        outDataset = driver.Create(fsoutfn, cols, rows, len(pos), out_dtype)
         projection = fsDataset.GetProjection()
         geotransform = fsDataset.GetGeoTransform()
         if geotransform is not None:

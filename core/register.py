@@ -133,7 +133,7 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
             scale, angle, shift = similarity(refband, warpband)
 
             driver = inDataset2.GetDriver()
-            outDataset = driver.Create(block_filename, cols1, rows1, bands2, GDT_UInt16)
+            outDataset = driver.Create(block_filename, cols1, rows1, bands2, band_targ.DataType)
             projection = inDataset1.GetProjection()
             geotransform = inDataset1.GetGeoTransform()
             if geotransform is not None:

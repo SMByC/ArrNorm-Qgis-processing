@@ -22,6 +22,8 @@ import os
 import platform
 import shutil
 import subprocess
+from osgeo import gdal
+from osgeo.gdalconst import GA_ReadOnly
 
 from qgis.core import QgsProcessingException
 
@@ -43,6 +45,13 @@ class Normalization:
         self.img_norm = None
         self.no_neg = None
         self.norm_masked = None
+
+        # define the output type
+        ref_dtype = gdal.Open(self.img_ref, GA_ReadOnly).GetRasterBand(1).DataType
+        target_dtype = gdal.Open(self.img_ref, GA_ReadOnly).GetRasterBand(1).DataType
+        self.out_dtype = ref_dtype if ref_dtype > target_dtype else target_dtype
+        ref_dtype = None
+        target_dtype = None
 
     def run(self):
 
@@ -150,7 +159,7 @@ class Normalization:
         self.feedback.pushInfo("\nRadcal process for\n" +
               os.path.basename(self.img_ref) + " " + os.path.basename(self.img_target) + " " +
               " with iMad image: " + os.path.basename(self.img_imad))
-        radcal.main(self.img_imad, self.img_norm, ncpThresh=self.prob_thres)
+        radcal.main(self.img_imad, self.img_norm, ncpThresh=self.prob_thres, out_dtype=self.out_dtype)
 
     def no_negative_value(self, image):
         # ======================================
