@@ -19,11 +19,10 @@
  ***************************************************************************/
 """
 import os
-import platform
 import shutil
-import subprocess
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly
+from osgeo_utils.gdal_calc import Calc as gdal_calc
 
 from qgis.core import QgsProcessingException
 
@@ -31,12 +30,11 @@ from ArrNorm.core import iMad, radcal
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output_file, feedback):
+    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, output_file, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
         self.prob_thres = prob_thres
-        self.nodata_mask = nodata_mask
         self.neg_to_nodata = neg_to_nodata
         self.output_file = output_file
         self.feedback = feedback
@@ -44,7 +42,6 @@ class Normalization:
         self.img_imad = None
         self.img_norm = None
         self.no_neg = None
-        self.norm_masked = None
 
         # define the output type
         ref_dtype = gdal.Open(self.img_ref, GA_ReadOnly).GetRasterBand(1).DataType
@@ -76,15 +73,8 @@ class Normalization:
             self.feedback.setProgress(93)
             self.no_negative_value(self.img_norm)
 
-        if self.nodata_mask:
-            self.feedback.setProgress(97)
-            self.make_mask()
-            self.apply_mask(self.no_neg if self.no_neg else self.img_norm)
-
         # finish
-        if self.norm_masked:
-            shutil.move(self.norm_masked, self.output_file)
-        elif self.no_neg:
+        if self.no_neg:
             shutil.move(self.no_neg, self.output_file)
         else:
             shutil.move(self.img_norm, self.output_file)
@@ -168,62 +158,16 @@ class Normalization:
         filename, ext = os.path.splitext(os.path.basename(self.img_target))
         self.no_neg = os.path.join(os.path.dirname(os.path.abspath(self.img_target)), filename + "_no_neg" + ext)
 
-        self.feedback.pushInfo('\nConverting negative values for\n' +
-              os.path.basename(os.path.basename(image)))
-        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
-               '--overwrite', '--calc', '"A*(A>=0)"', '--allBands=A', '--NoDataValue=0', '--type=UInt16', '--quiet',
-               '--outfile', '"{}"'.format(self.no_neg)]
-        cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if cmd_out.returncode == 0:  # successfully
+        self.feedback.pushInfo('\nConverting negative values for\n' + os.path.basename(os.path.basename(image)))
+
+        try:
+            gdal_calc(A=image, outfile=self.no_neg, calc="A*(A>=0)", NoDataValue=0,
+                      allBands="A", overwrite=True, quiet=True, creation_options=["BIGTIFF=YES"])
             self.feedback.pushInfo('Negative values converted successfully: ' + os.path.basename(image))
-        else:
+        except Exception as e:
             self.clean()
-            raise QgsProcessingException('\nError converting values: ' + str(cmd_out.stderr.decode()))
+            raise QgsProcessingException('\nError converting values: ' + str(e))
 
-    def make_mask(self):
-        # ======================================
-        # Make mask
-
-        img_to_process = self.img_target
-
-        self.feedback.pushInfo('\nMaking mask for\n' +
-              os.path.basename(self.img_target) + " " + os.path.basename(img_to_process))
-
-        filename, ext = os.path.splitext(os.path.basename(self.output_file))
-        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
-
-        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(img_to_process),
-               '--overwrite', '--calc', '"1*(A>0)"', '--type=Byte', '--NoDataValue=0', '--co', 'COMPRESS=PACKBITS',
-               '--quiet', '--outfile', '"{}"'.format(self.mask_file)]
-        cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        if cmd_out.returncode == 0:  # successfully
-            self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
-        else:
-            self.clean()
-            raise QgsProcessingException('\nError creating mask: ' + str(cmd_out.stderr.decode()))
-
-    def apply_mask(self, image):
-        # ======================================
-        # Apply mask to image normalized
-
-        filename, ext = os.path.splitext(os.path.basename(self.img_target))
-        self.norm_masked = os.path.join(os.path.dirname(os.path.abspath(self.img_target)), filename + "_norm_masked" + ext)
-
-        self.feedback.pushInfo('\nApplying mask for\n' +
-              os.path.basename(self.img_target) + " " + os.path.basename(image))
-
-        cmd = ['gdal_calc' if platform.system() == 'Windows' else 'gdal_calc.py', '-A', '"{}"'.format(image),
-               '-B', '"{}"'.format(self.mask_file), '--overwrite', '--calc', '"A*(B==1)"', '--type=UInt16',
-               '--NoDataValue=0', '--co', 'COMPRESS=LZW', '--co', 'PREDICTOR=2', '--quiet', '--allBands=A',
-               '--outfile', '"{}"'.format(self.norm_masked)]
-        cmd_out = subprocess.run(" ".join(cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        if cmd_out.returncode == 0:  # successfully
-            self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
-        else:
-            self.clean()
-            raise QgsProcessingException('\nError applied mask: ' + str(cmd_out.stderr.decode()))
 
     def clean(self):
         # delete the MAD file
@@ -233,5 +177,4 @@ class Normalization:
             os.remove(self.img_ref_clip) if os.path.exists(self.img_ref_clip) else None
         os.remove(self.img_norm) if self.img_norm and os.path.exists(self.img_norm) else None
         os.remove(self.no_neg) if self.no_neg and os.path.exists(self.no_neg) else None
-        os.remove(self.norm_masked) if self.norm_masked and os.path.exists(self.norm_masked) else None
 
