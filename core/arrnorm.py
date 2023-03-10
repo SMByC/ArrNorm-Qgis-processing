@@ -168,7 +168,6 @@ class Normalization:
             self.clean()
             raise QgsProcessingException('\nError converting values: ' + str(e))
 
-
     def clean(self):
         # delete the MAD file
         os.remove(self.img_imad) if self.img_imad and os.path.exists(self.img_imad) else None
