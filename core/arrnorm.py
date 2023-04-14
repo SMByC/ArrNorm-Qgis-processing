@@ -98,41 +98,22 @@ class Normalization:
 
     def clipper(self):
         """Clip the reference image with the target image"""
-        from osgeo import gdal
-        from osgeo.gdalconst import GA_ReadOnly
 
-        gdal_file = gdal.Open(self.img_target, GA_ReadOnly)
-
-        # pixel size
-        pixel_size_x = abs(round(gdal_file.GetGeoTransform()[1], 3))
-        pixel_size_y = abs(round(gdal_file.GetGeoTransform()[5], 3))
-        if pixel_size_x != pixel_size_y:
-            self.clean()
-            raise QgsProcessingException('\nError: target and reference image have different pixel sizes\n')
-
-        # extent
-        x_size = gdal_file.RasterXSize
-        y_size = gdal_file.RasterYSize
-        if x_size == y_size:
-            self.feedback.pushInfo("\nImages with the same extent, not neccessary to clip\n")
+        # check if the reference and target images have the same rows and columns
+        if get_rows_cols_from_raster(self.img_ref) == get_rows_cols_from_raster(self.img_target):
+            self.feedback.pushInfo("\nImages have the same dimensions, not necessary to clip\n")
             self.img_ref_clip = self.img_ref
             return
 
         self.feedback.pushInfo("\nClipping the ref image with target\n")
 
-        geoTransform = gdal_file.GetGeoTransform()
-        minx = geoTransform[0]
-        maxy = geoTransform[3]
-        maxx = minx + geoTransform[1] * gdal_file.RasterXSize
-        miny = maxy + geoTransform[5] * gdal_file.RasterYSize
-        gdal_file = None
         filename, ext = os.path.splitext(os.path.basename(self.img_ref))
         self.img_ref_clip = os.path.join(os.path.dirname(os.path.abspath(self.img_target)),
                                          filename + "_" + os.path.splitext(os.path.basename(self.img_target))[0]
                                          + "_clip" + ext)
 
         try:
-            gdal.Translate(self.img_ref_clip, self.img_ref, projWin=[minx, maxy, maxx, miny], format='GTiff')
+            gdal.Translate(self.img_ref_clip, self.img_ref, projWin=get_extent_from_raster(self.img_target), format='GTiff')
             self.feedback.pushInfo('Clipped ref image successfully: ' + os.path.basename(self.img_ref_clip))
         except Exception as e:
             self.clean()
@@ -224,4 +205,23 @@ class Normalization:
         os.remove(self.img_norm) if self.img_norm and os.path.exists(self.img_norm) else None
         os.remove(self.no_neg) if self.no_neg and os.path.exists(self.no_neg) else None
         os.remove(self.norm_masked) if self.norm_masked and os.path.exists(self.norm_masked) else None
+
+
+def get_extent_from_raster(raster_path):
+    raster = gdal.Open(raster_path, gdal.GA_ReadOnly)
+    geotransform = raster.GetGeoTransform()
+    xmin = geotransform[0]
+    ymax = geotransform[3]
+    xmax = xmin + geotransform[1] * raster.RasterXSize
+    ymin = ymax + geotransform[5] * raster.RasterYSize
+    del raster
+    return [xmin, ymax, xmax, ymin]
+
+
+def get_rows_cols_from_raster(raster_path):
+    raster = gdal.Open(raster_path, gdal.GA_ReadOnly)
+    rows = raster.RasterYSize
+    cols = raster.RasterXSize
+    del raster
+    return rows, cols
 
