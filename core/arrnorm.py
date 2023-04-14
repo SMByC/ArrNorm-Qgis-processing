@@ -30,18 +30,20 @@ from ArrNorm.core import iMad, radcal
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, output_file, feedback):
+    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output_file, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
         self.prob_thres = prob_thres
         self.neg_to_nodata = neg_to_nodata
+        self.nodata_mask = nodata_mask
         self.output_file = output_file
         self.feedback = feedback
 
         self.img_imad = None
         self.img_norm = None
         self.no_neg = None
+        self.norm_masked = None
 
         # define the output type
         ref_dtype = gdal.Open(self.img_ref, GA_ReadOnly).GetRasterBand(1).DataType
@@ -73,8 +75,15 @@ class Normalization:
             self.feedback.setProgress(93)
             self.no_negative_value(self.img_norm)
 
+        if self.nodata_mask:
+            self.feedback.setProgress(97)
+            self.make_mask()
+            self.apply_mask(self.no_neg if self.no_neg else self.img_norm)
+
         # finish
-        if self.no_neg:
+        if self.norm_masked:
+            shutil.move(self.norm_masked, self.output_file)
+        elif self.no_neg:
             shutil.move(self.no_neg, self.output_file)
         else:
             shutil.move(self.img_norm, self.output_file)
@@ -168,6 +177,44 @@ class Normalization:
             self.clean()
             raise QgsProcessingException('\nError converting values: ' + str(e))
 
+    def make_mask(self):
+        # ======================================
+        # Make mask
+
+        img_to_process = self.img_target
+
+        self.feedback.pushInfo('\nMaking mask for\n' +
+              os.path.basename(self.img_target) + " " + os.path.basename(img_to_process))
+
+        filename, ext = os.path.splitext(os.path.basename(self.output_file))
+        self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
+
+        try:
+            gdal_calc(A=img_to_process, outfile=self.mask_file, calc="1*(A>0)", NoDataValue=0, type=gdal.GDT_Byte,
+                      allBands="A", overwrite=True, quiet=True, creation_options=["COMPRESS=PACKBITS"])
+            self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
+        except Exception as e:
+            self.clean()
+            raise QgsProcessingException('\nError creating mask: ' + str(e))
+
+    def apply_mask(self, image):
+        # ======================================
+        # Apply mask to image normalized
+
+        filename, ext = os.path.splitext(os.path.basename(self.img_target))
+        self.norm_masked = os.path.join(os.path.dirname(os.path.abspath(self.img_target)), filename + "_norm_masked" + ext)
+
+        self.feedback.pushInfo('\nApplying mask for\n' +
+              os.path.basename(self.img_target) + " " + os.path.basename(image))
+
+        try:
+            gdal_calc(A=image, B=self.mask_file, outfile=self.norm_masked, calc="A*(B==1)", NoDataValue=0,
+                      allBands="A", overwrite=True, quiet=True)
+            self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
+        except Exception as e:
+            self.clean()
+            raise QgsProcessingException('\nError applied mask: ' + str(e))
+
     def clean(self):
         # delete the MAD file
         os.remove(self.img_imad) if self.img_imad and os.path.exists(self.img_imad) else None
@@ -176,4 +223,5 @@ class Normalization:
             os.remove(self.img_ref_clip) if os.path.exists(self.img_ref_clip) else None
         os.remove(self.img_norm) if self.img_norm and os.path.exists(self.img_norm) else None
         os.remove(self.no_neg) if self.no_neg and os.path.exists(self.no_neg) else None
+        os.remove(self.norm_masked) if self.norm_masked and os.path.exists(self.norm_masked) else None
 

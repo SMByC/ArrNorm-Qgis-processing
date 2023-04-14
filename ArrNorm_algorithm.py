@@ -163,7 +163,17 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         parameter = \
             QgsProcessingParameterBoolean(
                 self.NEG_TO_NODATA,
-                self.tr('Convert all negative values to NoData'),
+                self.tr('Convert negative values to nodata (0) to result'),
+                defaultValue=False,
+                optional=True
+            )
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(parameter)
+
+        parameter = \
+            QgsProcessingParameterBoolean(
+                self.NODATA_MASK,
+                self.tr('Mask nodata values (0) to result'),
                 defaultValue=False,
                 optional=True
             )
@@ -193,6 +203,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context),
             prob_thres= self.parameterAsDouble(parameters, self.PROB_THRES, context),
             neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
+            nodata_mask=self.parameterAsBoolean(parameters, self.NODATA_MASK, context),
             output_file=output_file,
             feedback=feedback)
 
