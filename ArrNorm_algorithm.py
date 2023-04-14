@@ -65,15 +65,11 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         <p>ArrNorm is a Qgis processing plugin for apply the radiometric normalization to the target image \
         based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative \
         radiometric normalization.</p>
-        <p>The algorithm takes advantage of the linear and affine invariance of the Multivariate alteration detection \
-        (MAD) transformation to perform a relative radiometric normalization of the images involved in the \
-        transformation, using the correlation of the iteratively reweighted MAD (IR-MAD) [1]</p>
         <p>Stop condition is set by max iteration or with a minimum no-change probability threshold. With more \
         iterations the algorithm try to find a better match to the reference image, decreasing the delta, the plugin \
         select the best delta for the final result. However, after several iterations the changes in the delta are \
         imperceptible.</p>
-        <p>[1] M. J. Canty (2014): Image Analysis, Classification and Change Detection in Remote Sensing, with \
-        Algorithms for ENVI/IDL and Python (Third Revised Edition), Taylor and Francis CRC Press.</p>
+        <p>Note: For now, this plugin only takes values of zeros as nodata, so adjust the data accordingly.</p>
         '''
         return html_help
 

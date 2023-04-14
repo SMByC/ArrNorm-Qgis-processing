@@ -15,7 +15,9 @@ Stop condition is set by max iteration or with a minimum no-change probability t
 
 ---
 
-> *Note:* For uninstall/update this plugin Windows, due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
+> *Note 1:* For now, this plugin only takes values of zeros as nodata, so adjust the data accordingly.
+
+> *Note 2:* For uninstall/update this plugin Windows, due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
 
 ## Source code
 
