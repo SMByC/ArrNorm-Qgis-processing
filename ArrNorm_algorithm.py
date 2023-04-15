@@ -170,7 +170,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterBoolean(
                 self.NODATA_MASK,
                 self.tr('Mask nodata values (0) to result'),
-                defaultValue=False,
+                defaultValue=True,
                 optional=True
             )
         parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
