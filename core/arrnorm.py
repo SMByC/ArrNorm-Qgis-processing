@@ -151,7 +151,7 @@ class Normalization:
         self.feedback.pushInfo('\nConverting negative values for\n' + os.path.basename(os.path.basename(image)))
 
         try:
-            gdal_calc(A=image, outfile=self.no_neg, calc="A*(A>=0)", NoDataValue=0,
+            gdal_calc(A=image, outfile=self.no_neg, calc="A*(A>=0)", NoDataValue=get_no_data_value_from_raster(self.img_target),
                       allBands="A", overwrite=True, quiet=True, creation_options=["BIGTIFF=YES"])
             self.feedback.pushInfo('Negative values converted successfully: ' + os.path.basename(image))
         except Exception as e:
@@ -171,7 +171,7 @@ class Normalization:
         self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
 
         try:
-            gdal_calc(A=img_to_process, outfile=self.mask_file, calc="1*(A>0)", NoDataValue=0, type=gdal.GDT_Byte,
+            gdal_calc(A=img_to_process, outfile=self.mask_file, calc="1*(A>0)", type=gdal.GDT_Byte,
                       allBands="A", overwrite=True, quiet=True, creation_options=["COMPRESS=PACKBITS"])
             self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
         except Exception as e:
@@ -189,7 +189,8 @@ class Normalization:
               os.path.basename(self.img_target) + " " + os.path.basename(image))
 
         try:
-            gdal_calc(A=image, B=self.mask_file, outfile=self.norm_masked, calc="A*(B==1)", NoDataValue=0,
+            gdal_calc(A=image, B=self.mask_file, outfile=self.norm_masked, calc="A*(B==1)",
+                      NoDataValue=get_no_data_value_from_raster(self.img_target),
                       allBands="A", overwrite=True, quiet=True)
             self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
         except Exception as e:
@@ -225,3 +226,9 @@ def get_rows_cols_from_raster(raster_path):
     del raster
     return rows, cols
 
+
+def get_no_data_value_from_raster(raster_path):
+    raster = gdal.Open(raster_path, gdal.GA_ReadOnly)
+    no_data_value = raster.GetRasterBand(1).GetNoDataValue()
+    del raster
+    return no_data_value
