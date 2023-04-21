@@ -139,7 +139,8 @@ class Normalization:
         self.feedback.pushInfo("\nRadcal process for\n" +
               os.path.basename(self.img_ref) + " " + os.path.basename(self.img_target) + " " +
               " with iMad image: " + os.path.basename(self.img_imad))
-        radcal.main(self.img_imad, self.img_norm, ncpThresh=self.prob_thres, out_dtype=self.out_dtype)
+        radcal.main(self.img_imad, img_ref=self.img_ref_clip, img_tgt=self.img_target, output=self.img_norm,
+                    ncpThresh=self.prob_thres, out_dtype=self.out_dtype)
 
     def no_negative_value(self, image):
         # ======================================

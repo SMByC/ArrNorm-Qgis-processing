@@ -56,7 +56,7 @@ Note that, for ENVI format, ext is the empty string.
 -------------------------------------------------------'''
 
 
-def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None, graphics=False, out_dtype=None):
+def main(img_imad, img_ref, img_tgt, output, ncpThresh=0.95, pos=None, dims=None, img_target=None, graphics=False, out_dtype=None):
 
     if img_target is not None:
         path = os.path.dirname(img_target)
@@ -64,14 +64,6 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
         root, ext = os.path.splitext(basename)
         fsoutfn = os.path.join(path, root + '_norm_all' + ext)
 
-    path = os.path.dirname(img_imad)
-    basename = os.path.basename(img_imad)
-    root, ext = os.path.splitext(basename)
-    b = root.find('(')
-    err = root.find(')')
-    referenceroot, targetbasename = root[b + 1:err].split('&')
-    referencefn = os.path.join(path, referenceroot + ext)
-    targetfn = os.path.join(path, targetbasename)
     outfn = output
     imadDataset = gdal.Open(img_imad, GA_ReadOnly)
     try:
@@ -81,8 +73,8 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     except Exception as err:
         print('Error: {}  --Image could not be read'.format(err))
         sys.exit(1)
-    referenceDataset = gdal.Open(referencefn, GA_ReadOnly)
-    targetDataset = gdal.Open(targetfn, GA_ReadOnly)
+    referenceDataset = gdal.Open(img_ref, GA_ReadOnly)
+    targetDataset = gdal.Open(img_tgt, GA_ReadOnly)
     if pos is None:
         pos = list(range(1, referenceDataset.RasterCount + 1))
     if dims is None:
@@ -94,8 +86,8 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     ncp = 1 - stats.chi2.cdf(chisqr, [imadbands - 1])
     idx = where(ncp > ncpThresh)
     print(time.asctime())
-    print('reference: ' + referencefn)
-    print('target   : ' + targetfn)
+    print('reference: ' + img_ref)
+    print('target   : ' + img_tgt)
     print('no-change probability threshold: ' + str(ncpThresh))
     print('no-change pixels: ' + str(len(idx[0])))
     start = time.time()
@@ -137,10 +129,7 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     if graphics:
         plt.show()
         plt.close()
-    referenceDataset = None
-    targetDataset = None
-    outDataset = None
-    print('result written to: ' + outfn)
+
     if img_target is not None:
         print('normalizing ' + img_target + '...')
         fsDataset = gdal.Open(img_target, GA_ReadOnly)
@@ -174,34 +163,3 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
 
     print('elapsed time: {}'.format(time.time() - start))
     return outfn
-
-
-if __name__ == '__main__':
-
-    options, args = getopt.getopt(sys.argv[1:], 'hnp:d:t:')
-    pos = None
-    dims = None
-    ncpThresh = 0.95
-    fsfn = None
-    graphics = True
-    for option, value in options:
-        if option == '-h':
-            print(usage)
-            sys.exit()
-        elif option == '-n':
-            graphics = False
-        elif option == '-p':
-            pos = eval(value)
-        elif option == '-d':
-            dims = eval(value)
-        elif option == '-t':
-            ncpThresh = eval(value)
-    if (len(args) != 1) and (len(args) != 2):
-        print('Incorrect number of arguments')
-        print(usage)
-        sys.exit(1)
-    imadfn = args[0]
-    if len(args) == 2:
-        fsfn = args[1]
-
-    main(imadfn, ncpThresh, pos, dims, fsfn)
