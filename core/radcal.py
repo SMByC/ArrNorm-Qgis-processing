@@ -62,7 +62,7 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
         path = os.path.dirname(img_target)
         basename = os.path.basename(img_target)
         root, ext = os.path.splitext(basename)
-        fsoutfn = path + '/' + root + '_norm_all' + ext
+        fsoutfn = os.path.join(path, root + '_norm_all' + ext)
 
     path = os.path.dirname(img_imad)
     basename = os.path.basename(img_imad)
@@ -70,8 +70,8 @@ def main(img_imad, output, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     b = root.find('(')
     err = root.find(')')
     referenceroot, targetbasename = root[b + 1:err].split('&')
-    referencefn = path + '/' + referenceroot + ext
-    targetfn = path + '/' + targetbasename
+    referencefn = os.path.join(path, referenceroot + ext)
+    targetfn = os.path.join(path, targetbasename)
     outfn = output
     imadDataset = gdal.Open(img_imad, GA_ReadOnly)
     try:
