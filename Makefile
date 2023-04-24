@@ -52,7 +52,7 @@ UI_FILES =
 
 EXTRAS = metadata.txt 
 
-EXTRA_DIRS = core icons
+EXTRA_DIRS = core icons extlibs
 
 COMPILED_RESOURCE_FILES = resources.py
 

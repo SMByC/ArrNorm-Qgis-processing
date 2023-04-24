@@ -5,7 +5,7 @@ description=Apply the automatic relative radiometric normalization to the target
 about=ArrNorm is a Qgis processing plugin for apply the radiometric normalization to the target image based on reference
     image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization
 
-version=23.4
+version=23.4b
 qgisMinimumVersion=3.0
 qgisMaximumVersion=3.99
 
