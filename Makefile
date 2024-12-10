@@ -50,7 +50,7 @@ PY_FILES = \
 
 UI_FILES = 
 
-EXTRAS = metadata.txt 
+EXTRAS = metadata.txt LICENSE
 
 EXTRA_DIRS = core icons extlibs
 
