@@ -16,10 +16,11 @@
 #    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #    GNU General Public License for more details.
 import os
+import sys
 import getopt
 import time
-import matplotlib.pyplot as plt
-from numpy import *
+import numpy as np
+from numpy import zeros, where, resize
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly, GDT_UInt16
 from scipy import stats
@@ -101,6 +102,11 @@ def main(img_imad, img_ref, img_tgt, output, ncpThresh=0.95, pos=None, dims=None
         outDataset.SetProjection(projection)
     aa = []
     bb = []
+    if graphics:
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            graphics = False  # matplotlib not available; skip graphics
     if graphics:
         plt.figure(1, (9, 6))
     j = 1

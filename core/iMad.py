@@ -19,7 +19,6 @@
 
 import os
 from operator import itemgetter
-import matplotlib.pyplot as plt
 import numpy as np
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly, GDT_Float32
@@ -90,6 +89,20 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
         x2 = x0
         y2 = y0
 
+    # Dimension guard: after the clipper() step in arrnorm.py, both images MUST share
+    # the same pixel grid (same cols x rows).  Any mismatch here means the reference
+    # was not reprojected/aligned correctly, so the IR-MAD correlation would be
+    # computed between spatially mismatched pixels — raising an error is safer than
+    # silently producing wrong results.
+    if cols != cols2 or rows != rows2:
+        raise QgsProcessingException(
+            "\n ERROR: Reference clip ({cols}x{rows}) and target ({cols2}x{rows2}) "
+            "have different pixel dimensions.\n"
+            " Pixel-for-pixel alignment is required for IR-MAD. "
+            "Ensure both images share the same CRS, pixel size, and spatial extent "
+            "before running the normalization.\n".format(
+                cols=cols, rows=rows, cols2=cols2, rows2=rows2))
+
     feedback.pushInfo('\n------------IRMAD -------------')
     # iteration of MAD
     cpm = auxil.Cpm(2 * bands)
@@ -143,7 +156,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
                 idx2 = set(np.where((tst2 != 0))[0])
                 idx = list(idx1.intersection(idx2))
                 if current_iter > 0:
-                    mads = np.asarray((tile[:, 0:bands] - means1) * A - (tile[:, bands::] - means2) * B)
+                    mads = (tile[:, 0:bands] - means1) @ A - (tile[:, bands::] - means2) @ B
                     chisqr = np.sum(np.square(mads / sigMADs), axis=1)
                     wts = 1 - stats.chi2.cdf(chisqr, [bands])
                     cpm.update(tile[idx, :], wts[idx])
@@ -159,9 +172,9 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
             s22 = S[bands:, bands:]
             s12 = S[0:bands, bands:]
             s21 = S[bands:, 0:bands]
-            c1 = s12 * linalg.inv(s22) * s21
+            c1 = s12 @ linalg.inv(s22) @ s21
             b1 = s11
-            c2 = s21 * linalg.inv(s11) * s12
+            c2 = s21 @ linalg.inv(s11) @ s12
             b2 = s22
             # solution of generalized eigenproblems
             if bands > 1:
@@ -181,7 +194,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
 
             # canonical correlations
             rho = np.sqrt(mu2)
-            b2 = np.diag(B.T * B)
+            b2 = np.diag(B.T @ B)
             sigma = np.sqrt(2 * (1 - rho))
             # stopping criterion
             delta = max(abs(rho - oldrho))
@@ -196,11 +209,11 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
             means2 = np.tile(means[bands::], (cols, 1))
             # ensure sum of positive correlations between X and U is positive
             D = np.diag(1 / np.sqrt(np.diag(s11)))
-            s = np.ravel(np.sum(D * s11 * A, axis=0))
-            A = A * np.diag(s / np.abs(s))
+            s = np.ravel(np.sum(D @ s11 @ A, axis=0))
+            A = A @ np.diag(s / np.abs(s))
             # ensure positive correlation between each pair of canonical variates
-            cov = np.diag(A.T * s12 * B)
-            B = B * np.diag(cov / np.abs(cov))
+            cov = np.diag(A.T @ s12 @ B)
+            B = B @ np.diag(cov / np.abs(cov))
             current_iter += 1
 
             feedback.pushInfo(' -> iteration: {iter}, delta: {delta}'.format(
@@ -223,6 +236,16 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
             return
 
         if current_iter == max_iters:  # end iteration
+            # Guard: if every iteration failed, results is empty → raise a clear error
+            if not results:
+                raise QgsProcessingException(
+                    "\n ERROR: All {max_iters} iteration(s) failed without producing any valid result.\n"
+                    " Common causes:\n"
+                    "  - Reference and target have different pixel dimensions or extents after clipping\n"
+                    "  - Mismatched coordinate reference systems\n"
+                    "  - One or more bands contain only zeros or nodata\n"
+                    " Check the warnings above for the specific error that occurred.\n".format(
+                        max_iters=max_iters))
             # select the result with the best delta
             best_results = sorted(results, key=itemgetter(0))[0]
             feedback.pushInfo(
@@ -261,7 +284,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
         for k in range(bands):
             tile[:, k] = rasterBands1[k].ReadAsArray(x0, y0 + row, cols, 1)
             tile[:, bands + k] = rasterBands2[k].ReadAsArray(x2, y2 + row, cols, 1)
-        mads = np.asarray((tile[:, 0:bands] - means1) * A - (tile[:, bands::] - means2) * B)
+        mads = (tile[:, 0:bands] - means1) @ A - (tile[:, bands::] - means2) @ B
         chisqr = np.sum(np.square(mads / sigMADs), axis=1)
         for k in range(bands):
             outBands[k].WriteArray(np.reshape(mads[:, k], (1, cols)), 0, row)
@@ -273,8 +296,12 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None, graphics=F
     inDataset2 = None
     x = np.array(list(range(current_iter - 1)))
     if graphics:
-        plt.plot(x, rhos[0:current_iter - 1, :])
-        plt.title('Canonical correlations')
-        plt.show()
+        try:
+            import matplotlib.pyplot as plt
+            plt.plot(x, rhos[0:current_iter - 1, :])
+            plt.title('Canonical correlations')
+            plt.show()
+        except ImportError:
+            pass  # matplotlib not available; skip graphics
 
     return outfn

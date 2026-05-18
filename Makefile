@@ -60,12 +60,18 @@ PEP8EXCLUDE=pydev,resources.py,conf.py,third_party,ui
 
 # QGISDIR points to the location where your plugin should be installed.
 # This varies by platform, relative to your HOME directory:
-#	* Linux:
+#	* Linux (QGIS3):
 #	  .local/share/QGIS/QGIS3/profiles/default/python/plugins/
-#	* Mac OS X:
+#	* Linux (QGIS4):
+#	  .local/share/QGIS/QGIS4/profiles/default/python/plugins/
+#	* Mac OS X (QGIS3):
 #	  Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins
-#	* Windows:
-#	  AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins'
+#	* Mac OS X (QGIS4):
+#	  Library/Application Support/QGIS/QGIS4/profiles/default/python/plugins
+#	* Windows (QGIS3):
+#	  AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins
+#	* Windows (QGIS4):
+#	  AppData\Roaming\QGIS\QGIS4\profiles\default\python\plugins
 
 QGISDIR=.local/share/QGIS/QGIS3/profiles/default
 
@@ -81,10 +87,28 @@ RESOURCE_SRC=$(shell grep '^ *<file' resources.qrc | sed 's@</file>@@g;s/.*>//g'
 
 default: compile
 
+# Note: Resource compilation is optional if icons use direct file paths (QGIS 4.x style).
 compile: $(COMPILED_RESOURCE_FILES)
 
+# Resource compilation rule supporting both Qt5 (pyrcc5) and Qt6 (pyside6-rcc).
+# Tries pyside6-rcc first (available in QGIS 4.x / Qt6 environments),
+# then falls back to pyrcc5 (QGIS 3.x / Qt5 environments).
 %.py : %.qrc $(RESOURCES_SRC)
-	pyrcc5 -o $*.py  $<
+	@if command -v pyside6-rcc > /dev/null 2>&1; then \
+		echo "Using pyside6-rcc (Qt6/QGIS 4.x)"; \
+		pyside6-rcc -o $*.py $<; \
+	elif command -v pyrcc5 > /dev/null 2>&1; then \
+		echo "Using pyrcc5 (Qt5/QGIS 3.x)"; \
+		pyrcc5 -o $*.py $<; \
+	else \
+		echo "Error: Neither pyside6-rcc nor pyrcc5 found."; \
+		echo "Install pyside6 (Qt6/QGIS 4.x) or pyrcc5 (Qt5/QGIS 3.x)."; \
+		exit 1; \
+	fi
+
+# Old Qt5-only rule (kept for reference):
+# %.py : %.qrc $(RESOURCES_SRC)
+# 	pyrcc5 -o $*.py  $<
 
 %.qm : %.ts
 	$(LRELEASE) $<
@@ -99,7 +123,7 @@ test: compile transcompile
 	@-export PYTHONPATH=`pwd`:$(PYTHONPATH); \
 		export QGIS_DEBUG=0; \
 		export QGIS_LOG_FILE=/dev/null; \
-		nosetests -v --with-id --with-coverage --cover-package=. \
+		python3 -m pytest -v \
 		3>&1 1>&2 2>&3 3>&- || true
 	@echo "----------------------"
 	@echo "If you get a 'no module named qgis.core error, try sourcing"

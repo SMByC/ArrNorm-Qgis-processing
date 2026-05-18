@@ -111,7 +111,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         return None
 
     def icon(self):
-        return QIcon(":/plugins/ArrNorm/icons/arrnorm.svg")
+        return QIcon(os.path.join(os.path.dirname(__file__), 'icons', 'arrnorm.svg'))
 
     def initAlgorithm(self, config=None):
         """
@@ -138,22 +138,22 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.MAX_ITERS,
                 self.tr('Maximum number of iterations'),
-                type=QgsProcessingParameterNumber.Integer,
+                type=QgsProcessingParameterNumber.Type.Integer,
                 defaultValue=25,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter)
 
         parameter = \
             QgsProcessingParameterNumber(
                 self.PROB_THRES,
                 self.tr('No-change probability threshold'),
-                type=QgsProcessingParameterNumber.Double,
+                type=QgsProcessingParameterNumber.Type.Double,
                 defaultValue=0.95,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter)
 
         parameter = \
@@ -163,7 +163,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 defaultValue=False,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter)
 
         parameter = \
@@ -173,7 +173,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 defaultValue=True,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter)
 
         self.addParameter(

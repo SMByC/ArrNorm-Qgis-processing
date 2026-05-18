@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 
-# Resource object code
-#
-# Created by: The Resource Compiler for PyQt5 (Qt v5.15.2)
-#
-# WARNING! All changes made in this file will be lost!
+# Resource object code - originally compiled with pyrcc5, compatible with Qt5 and Qt6.
+# Qt resource format version 2 is supported by both Qt5 (>=5.8) and Qt6.
+# Icons are loaded via direct file paths as primary mechanism; this file is a fallback.
 
-from PyQt5 import QtCore
+from qgis.PyQt import QtCore
 
 qt_resource_data = b"\
 \x00\x00\x08\xb3\
@@ -194,6 +192,7 @@ qt_resource_struct_v2 = b"\
 "
 
 qt_version = [int(v) for v in QtCore.qVersion().split('.')]
+# Format version 1: Qt < 5.8; Format version 2: Qt >= 5.8 (including Qt 6.x)
 if qt_version < [5, 8, 0]:
     rcc_version = 1
     qt_resource_struct = qt_resource_struct_v1
@@ -202,9 +201,15 @@ else:
     qt_resource_struct = qt_resource_struct_v2
 
 def qInitResources():
-    QtCore.qRegisterResourceData(rcc_version, qt_resource_struct, qt_resource_name, qt_resource_data)
+    try:
+        QtCore.qRegisterResourceData(rcc_version, qt_resource_struct, qt_resource_name, qt_resource_data)
+    except Exception:
+        pass  # Graceful fallback; icons are loaded via direct file paths
 
 def qCleanupResources():
-    QtCore.qUnregisterResourceData(rcc_version, qt_resource_struct, qt_resource_name, qt_resource_data)
+    try:
+        QtCore.qUnregisterResourceData(rcc_version, qt_resource_struct, qt_resource_name, qt_resource_data)
+    except Exception:
+        pass
 
 qInitResources()

@@ -6,8 +6,8 @@ about=ArrNorm is a Qgis processing plugin for apply the radiometric normalizatio
     image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization
 
 version=24.12
-qgisMinimumVersion=3.0
-qgisMaximumVersion=3.99
+qgisMinimumVersion=3.16
+qgisMaximumVersion=4.99
 
 author=Xavier Corredor Llano, SMByC
 email=xcorredorl@ideam.gov.co

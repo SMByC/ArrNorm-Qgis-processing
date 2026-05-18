@@ -105,27 +105,90 @@ class Normalization:
                 img_norm=os.path.basename(self.img_norm)))
 
     def clipper(self):
-        """Clip the reference image with the target image"""
+        """Reproject and clip the reference image onto the target's exact pixel grid.
 
-        # check if the reference and target images have the same rows and columns
-        if get_rows_cols_from_raster(self.img_ref) == get_rows_cols_from_raster(self.img_target):
-            self.feedback.pushInfo("\nImages have the same dimensions, not necessary to clip\n")
+        The output reference clip will have:
+          - the same CRS as the target,
+          - the same upper-left origin (to full floating-point precision),
+          - the same pixel width and height,
+          - and therefore the same number of columns and rows.
+
+        This guarantees that every (row, col) position in the clipped reference
+        corresponds spatially to the identical ground location in the target,
+        which is required for the pixel-by-pixel IR-MAD and Radcal correlation.
+        """
+
+        # Read target and reference geotransform metadata
+        target_ds = gdal.Open(self.img_target, GA_ReadOnly)
+        target_proj = target_ds.GetProjection()
+        target_gt   = target_ds.GetGeoTransform()   # (originX, pixW, rot, originY, rot, pixH)
+        target_cols = target_ds.RasterXSize
+        target_rows = target_ds.RasterYSize
+        target_ds   = None
+
+        ref_ds   = gdal.Open(self.img_ref, GA_ReadOnly)
+        ref_proj = ref_ds.GetProjection()
+        ref_gt   = ref_ds.GetGeoTransform()
+        ref_cols = ref_ds.RasterXSize
+        ref_rows = ref_ds.RasterYSize
+        ref_ds   = None
+
+        # Perfect alignment: same CRS, same origin + pixel size (geotransform), same dimensions.
+        # Only then is the reference already on the identical pixel grid as the target.
+        if (ref_proj == target_proj
+                and ref_gt == target_gt
+                and ref_cols == target_cols
+                and ref_rows == target_rows):
+            self.feedback.pushInfo(
+                "\nReference image is already perfectly aligned with target "
+                "(same CRS, geotransform and dimensions). No clipping needed.\n")
             self.img_ref_clip = self.img_ref
             return
 
-        self.feedback.pushInfo("\nClipping the ref image with target\n")
+        self.feedback.pushInfo(
+            "\nReprojecting/aligning reference image to target pixel grid "
+            "(CRS: {crs}, resolution: {pixW:.6g} x {pixH:.6g}, "
+            "dimensions: {cols} x {rows})\n".format(
+                crs=target_proj[:50] if target_proj else 'unknown',
+                pixW=target_gt[1], pixH=abs(target_gt[5]),
+                cols=target_cols, rows=target_rows))
 
         filename, ext = os.path.splitext(os.path.basename(self.img_ref))
-        self.img_ref_clip = os.path.join(os.path.dirname(os.path.abspath(self.img_target)),
-                                         filename + "_" + os.path.splitext(os.path.basename(self.img_target))[0]
-                                         + "_clip" + ext)
+        self.img_ref_clip = os.path.join(
+            os.path.dirname(os.path.abspath(self.img_target)),
+            filename + "_" + os.path.splitext(os.path.basename(self.img_target))[0] + "_clip" + ext
+        )
 
         try:
-            gdal.Translate(self.img_ref_clip, self.img_ref, projWin=get_extent_from_raster(self.img_target), format='GTiff')
-            self.feedback.pushInfo('Clipped ref image successfully: ' + os.path.basename(self.img_ref_clip))
+            # Derive exact output bounds from the target's geotransform values.
+            # Using the raw geotransform avoids any floating-point rounding that
+            # would occur from intermediate extent string/float conversions.
+            xmin = target_gt[0]                              # left edge
+            ymax = target_gt[3]                              # top edge
+            xmax = xmin + target_gt[1] * target_cols        # right edge
+            ymin = ymax + target_gt[5] * target_rows        # bottom edge (gt[5] < 0)
+
+            # gdal.Warp with dstSRS + geotransform-derived outputBounds + exact width/height:
+            #   dstSRS        → reproject reference to target CRS (no-op if already the same)
+            #   outputBounds  → clip/pad to the exact target extent (in target-CRS coordinates)
+            #   width/height  → force exactly target_cols x target_rows output pixels
+            #
+            # Together these parameters make the output geotransform identical to the target's,
+            # guaranteeing pixel-for-pixel spatial coincidence for IR-MAD and Radcal.
+            gdal.Warp(
+                self.img_ref_clip, self.img_ref,
+                format='GTiff',
+                dstSRS=target_proj,
+                outputBounds=(xmin, ymin, xmax, ymax),  # (minX, minY, maxX, maxY)
+                width=target_cols,
+                height=target_rows,
+                resampleAlg=gdal.GRA_Bilinear,
+            )
+            self.feedback.pushInfo(
+                'Reference aligned successfully: ' + os.path.basename(self.img_ref_clip))
         except Exception as e:
             self.clean()
-            raise QgsProcessingException('\nError clipping reference image: ' + str(e))
+            raise QgsProcessingException('\nError clipping/reprojecting reference image: ' + str(e))
 
     def imad(self):
         # ======================================
@@ -181,7 +244,21 @@ class Normalization:
 
         try:
             gdal_calc(A=img_to_process, outfile=self.mask_file, calc="1*(A>0)", type=gdal.GDT_Byte,
-                      allBands="A", overwrite=True, quiet=True, creation_options=["COMPRESS=PACKBITS"])
+                      overwrite=True, quiet=True, creation_options=["COMPRESS=PACKBITS", "NBITS=1"])
+
+            # create color table
+            colors = gdal.ColorTable()
+            colors.SetColorEntry(0, (0, 0, 0, 255))
+            colors.SetColorEntry(1, (0, 255, 0, 255))
+
+            # set color table to the mask
+            mask_ds = gdal.Open(self.mask_file, GA_Update)
+            if mask_ds is not None:
+                mask_band = mask_ds.GetRasterBand(1)
+                mask_band.SetRasterColorTable(colors)
+                mask_band = None
+                mask_ds = None
+
             self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
         except Exception as e:
             self.clean()

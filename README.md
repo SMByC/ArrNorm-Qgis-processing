@@ -2,6 +2,13 @@
 
 ArrNorm is a Qgis processing plugin for apply the radiometric normalization to the target image based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization.
 
+## Compatibility
+
+| QGIS version | Qt version | Python bindings | Python version |
+|---|---|---|---|
+| QGIS 3.16+ | Qt 5 | PyQt5 | 3.9+ |
+| QGIS 4.x | Qt 6 | PyQt6 | 3.9+ |
+
 The algorithm takes advantage of the linear and affine invariance of the Multivariate alteration detection (MAD)
 transformation to perform a relative radiometric normalization of the images involved in the transformation, using the correlation of the iteratively reweighted MAD (IR-MAD) [1]
 
@@ -17,7 +24,7 @@ Stop condition is set by max iteration or with a minimum no-change probability t
 
 > *Note 1:* For now, this plugin only takes values of zeros as nodata, so adjust the data accordingly.
 
-> *Note 2:* For uninstall/update this plugin Windows, due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
+> *Note 2:* For uninstall/update this plugin on Windows (QGIS 3.x and QGIS 4.x), due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
 
 ## Source code
 

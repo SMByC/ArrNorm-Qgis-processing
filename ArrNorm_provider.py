@@ -26,7 +26,7 @@ from ArrNorm.ArrNorm_algorithm import ArrNormAlgorithm
 from . import resources
 
 # plugin path
-plugin_folder = os.path.dirname(os.path.dirname(__file__))
+plugin_folder = os.path.dirname(__file__)
 
 
 class ArrNormProvider(QgsProcessingProvider):
@@ -74,7 +74,7 @@ class ArrNormProvider(QgsProcessingProvider):
         Should return a QIcon which is used for your provider inside
         the Processing toolbox.
         """
-        return QIcon(":/plugins/ArrNorm/icons/arrnorm.svg")
+        return QIcon(os.path.join(os.path.dirname(__file__), 'icons', 'arrnorm.svg'))
 
     def longName(self):
         """

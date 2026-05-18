@@ -1,10 +1,16 @@
 #!/usr/bin/env python
 # ******************************************************************************
 #  Name:     supervisedclass.py
-#  Purpose:  object classes for supervised image classification, maximum likelihood, 
+#  Purpose:  object classes for supervised image classification, maximum likelihood,
 #            back-propagation, scaled conjugate gradient, support vector machine
-#  Usage:    
+#  Usage:
 #     import supervisedclass
+#
+#  NOTE: This module is NOT used by the main ArrNorm processing algorithm.
+#  It depends on the 'mlpy' library (Maxlike/LibSvm) which is a legacy package.
+#  The neural network classes (Ffn, Ffnbp, Ffncg) use np.matrix (deprecated since
+#  numpy 1.15; still functional in numpy 2.x). Full migration to ndarray + @ operator
+#  is deferred as this code is not part of the active plugin execution path.
 #
 #  Copyright (c) 2012, Mort Canty
 #    This program is free software; you can redistribute it and/or modify
@@ -36,12 +42,12 @@ class Maxlike(MaximumLikelihoodC):
         try:
             labels = np.argmax(self._ls, axis=1)
             idx = np.where(labels == 0)[0]
-            ls = np.ones(len(idx), dtype=np.int)
+            ls = np.ones(len(idx), dtype=int)
             Gs = self._Gs[idx, :]
             for k in range(1, self._K):
                 idx = np.where(labels == k)[0]
                 ls = np.concatenate((ls, \
-                                     (k + 1) * np.ones(len(idx), dtype=np.int)))
+                                     (k + 1) * np.ones(len(idx), dtype=int)))
                 Gs = np.concatenate((Gs, \
                                      self._Gs[idx, :]), axis=0)
             self.learn(Gs, ls)
@@ -204,7 +210,7 @@ class Ffncg(Ffn):
     def hessian(self):
         #      Hessian of cross entropy wrt synaptic weights
         nw = self._L * (self._N + 1) + self._K * (self._L + 1)
-        v = np.eye(nw, dtype=np.float)
+        v = np.eye(nw, dtype=float)
         H = np.zeros((nw, nw))
         for i in range(nw):
             H[i, :] = self.rop(v[i, :])
@@ -298,12 +304,12 @@ class Svm(object):
         try:
             labels = np.argmax(self._ls, axis=1)
             idx = np.where(labels == 0)[0]
-            ls = np.ones(len(idx), dtype=np.int)
+            ls = np.ones(len(idx), dtype=int)
             Gs = self._Gs[idx, :]
             for k in range(1, self._K):
                 idx = np.where(labels == k)[0]
                 ls = np.concatenate((ls, \
-                                     (k + 1) * np.ones(len(idx), dtype=np.int)))
+                                     (k + 1) * np.ones(len(idx), dtype=int)))
                 Gs = np.concatenate((Gs, \
                                      self._Gs[idx, :]), axis=0)
             self._svm.learn(Gs, ls)
