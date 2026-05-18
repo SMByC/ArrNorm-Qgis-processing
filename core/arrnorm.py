@@ -21,7 +21,7 @@
 import os
 import shutil
 from osgeo import gdal
-from osgeo.gdalconst import GA_ReadOnly
+from osgeo.gdalconst import GA_ReadOnly, GA_Update
 from osgeo_utils.gdal_calc import Calc as gdal_calc
 
 from qgis.core import QgsProcessingException
@@ -45,20 +45,23 @@ class Normalization:
         self.no_neg = None
         self.norm_masked = None
 
-        # define the output type
+        # Output dtype: use the higher-precision type of the two inputs.
         ref_ds = gdal.Open(self.img_ref, GA_ReadOnly)
-        band = ref_ds.GetRasterBand(1)
-        ref_dtype_code = band.DataType
-        # ref_dtype = gdal.GetDataTypeName(ref_dtype_code)
+        ref_dtype_code = ref_ds.GetRasterBand(1).DataType
+        ref_ds = None
 
         target_ds = gdal.Open(self.img_target, GA_ReadOnly)
-        band = target_ds.GetRasterBand(1)
-        target_dtype_code = band.DataType
-        # target_dtype = gdal.GetDataTypeName(target_dtype_code)
-
-        self.out_dtype = ref_dtype_code if ref_dtype_code > target_dtype_code else target_dtype_code
-        ref_ds = None
+        target_band = target_ds.GetRasterBand(1)
+        target_dtype_code = target_band.DataType
+        target_nodata    = target_band.GetNoDataValue()
+        target_band = None
         target_ds = None
+
+        self.out_dtype = max(ref_dtype_code, target_dtype_code)
+
+        # Nodata value used when building and applying the validity mask.
+        # Priority: image-embedded nodata value > fallback 0.
+        self.mask_nodata = target_nodata if target_nodata is not None else 0
 
     def run(self):
 
@@ -175,7 +178,7 @@ class Normalization:
             #
             # Together these parameters make the output geotransform identical to the target's,
             # guaranteeing pixel-for-pixel spatial coincidence for IR-MAD and Radcal.
-            gdal.Warp(
+            result = gdal.Warp(
                 self.img_ref_clip, self.img_ref,
                 format='GTiff',
                 dstSRS=target_proj,
@@ -184,6 +187,9 @@ class Normalization:
                 height=target_rows,
                 resampleAlg=gdal.GRA_Bilinear,
             )
+            if result is None:
+                raise RuntimeError('gdal.Warp returned None — check GDAL error log.')
+            result = None  # close/release the output dataset
             self.feedback.pushInfo(
                 'Reference aligned successfully: ' + os.path.basename(self.img_ref_clip))
         except Exception as e:
@@ -223,7 +229,7 @@ class Normalization:
         self.feedback.pushInfo('\nConverting negative values for\n' + os.path.basename(os.path.basename(image)))
 
         try:
-            gdal_calc(A=image, outfile=self.no_neg, calc="A*(A>=0)", NoDataValue=get_no_data_value_from_raster(self.img_target),
+            gdal_calc(A=image, outfile=self.no_neg, calc="A*(A>=0)", NoDataValue=self.mask_nodata,
                       allBands="A", overwrite=True, quiet=True, creation_options=["BIGTIFF=YES"])
             self.feedback.pushInfo('Negative values converted successfully: ' + os.path.basename(image))
         except Exception as e:
@@ -243,20 +249,21 @@ class Normalization:
         self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
 
         try:
-            gdal_calc(A=img_to_process, outfile=self.mask_file, calc="1*(A>0)", type=gdal.GDT_Byte,
-                      overwrite=True, quiet=True, creation_options=["COMPRESS=PACKBITS", "NBITS=1"])
+            # Use the actual nodata value from the image metadata (resolved in __init__).
+            # "1*(A!=nodata)" is more general than the old "1*(A>0)" which incorrectly
+            # treated negative values (valid in some sensor products) as nodata.
+            gdal_calc(A=img_to_process, outfile=self.mask_file,
+                      calc="1*(A!={nd})".format(nd=self.mask_nodata),
+                      type=gdal.GDT_Byte, overwrite=True, quiet=True,
+                      creation_options=["COMPRESS=PACKBITS", "NBITS=1"])
 
-            # create color table
+            # Attach a green/black color table so the mask is immediately interpretable
             colors = gdal.ColorTable()
             colors.SetColorEntry(0, (0, 0, 0, 255))
             colors.SetColorEntry(1, (0, 255, 0, 255))
-
-            # set color table to the mask
             mask_ds = gdal.Open(self.mask_file, GA_Update)
             if mask_ds is not None:
-                mask_band = mask_ds.GetRasterBand(1)
-                mask_band.SetRasterColorTable(colors)
-                mask_band = None
+                mask_ds.GetRasterBand(1).SetRasterColorTable(colors)
                 mask_ds = None
 
             self.feedback.pushInfo('Mask created successfully: ' + os.path.basename(self.mask_file))
@@ -276,8 +283,8 @@ class Normalization:
 
         try:
             gdal_calc(A=image, B=self.mask_file, outfile=self.norm_masked, calc="A*(B==1)",
-                      NoDataValue=get_no_data_value_from_raster(self.img_target),
-                      allBands="A", overwrite=True, quiet=True)
+                      NoDataValue=self.mask_nodata,
+                      allBands="A", overwrite=True, quiet=True, creation_options=["BIGTIFF=YES"])
             self.feedback.pushInfo('Mask applied successfully: ' + os.path.basename(self.mask_file))
         except Exception as e:
             self.clean()
