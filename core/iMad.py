@@ -11,7 +11,6 @@
 # ******************************************************************************
 
 import os
-import sys
 import time
 from operator import itemgetter
 
@@ -20,7 +19,12 @@ from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly, GDT_Float32
 from scipy import stats
 
-import core.auxil.auxil as auxil
+from ArrNorm.core.auxil import auxil
+
+try:
+    from qgis.core import QgsProcessingException
+except ImportError:
+    QgsProcessingException = Exception
 
 # Block height (in rows) used when streaming both images band-by-band into
 # the running covariance accumulator. Reading 256 rows at a time amortizes
@@ -46,9 +50,25 @@ def _read_block(raster_bands, x0, y0, cols, n_rows):
 
 
 def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
-         graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS):
+         graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS,
+         feedback=None):
     gdal.AllRegister()
     start = time.time()  # was previously undefined at print-elapsed time (bug)
+
+    # -- Logging helpers: use QGIS feedback when available, print otherwise --
+    def _info(msg):
+        if feedback is not None:
+            feedback.pushInfo(msg)
+        else:
+            print(msg)
+
+    def _error(msg):
+        if feedback is not None:
+            feedback.reportError(msg, fatalError=True)
+        raise QgsProcessingException(msg)
+
+    def _canceled():
+        return feedback is not None and feedback.isCanceled()
 
     path = os.path.dirname(os.path.abspath(img_ref))
     basename1 = os.path.basename(img_ref)
@@ -60,8 +80,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     inDataset1 = gdal.Open(img_ref, GA_ReadOnly)
     inDataset2 = gdal.Open(img_target, GA_ReadOnly)
     if inDataset1 is None or inDataset2 is None:
-        sys.stderr.write("Error: input image(s) could not be opened.\n")
-        sys.exit(1)
+        _error("Error: input image(s) could not be opened.")
 
     cols = inDataset1.RasterXSize
     rows = inDataset1.RasterYSize
@@ -71,10 +90,9 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     bands2 = inDataset2.RasterCount
 
     if bands != bands2:
-        sys.stderr.write(
+        _error(
             f"Band count mismatch between reference ({bands}) "
-            f"and target ({bands2}).\n")
-        sys.exit(1)
+            f"and target ({bands2}).")
 
     if band_pos is None:
         band_pos = list(range(1, bands + 1))
@@ -96,14 +114,14 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     # Dimension guard: after clipper() in bin/arrnorm, both images MUST share
     # the same pixel grid. Pixel-for-pixel alignment is required for IR-MAD.
     if cols != cols2 or rows != rows2:
-        raise Exception(
+        _error(
             f"\n ERROR: Reference clip ({cols}x{rows}) and target "
             f"({cols2}x{rows2}) have different pixel dimensions.\n"
             f" Pixel-for-pixel alignment is required for IR-MAD. Ensure both "
             f"images share the same CRS, pixel size, and spatial extent "
             f"before running the normalization.\n")
 
-    print('------------IRMAD -------------')
+    _info('------------IRMAD -------------')
     rasterBands1 = [inDataset1.GetRasterBand(b) for b in band_pos]
     rasterBands2 = [inDataset2.GetRasterBand(b) for b in band_pos]
 
@@ -111,14 +129,12 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     # degenerate (singular covariance). Bail out early with a clear message.
     for k, rb in enumerate(rasterBands1):
         if not rb.ReadAsArray().any():
-            print(f"\nERROR: band {band_pos[k]} of '{basename1}' has only "
-                  f"zeros — please check it.\n")
-            sys.exit(1)
+            _error(f"\nERROR: band {band_pos[k]} of '{basename1}' has only "
+                   f"zeros — please check it.\n")
     for k, rb in enumerate(rasterBands2):
         if not rb.ReadAsArray().any():
-            print(f"\nERROR: band {band_pos[k]} of '{basename2}' has only "
-                  f"zeros — please check it.\n")
-            sys.exit(1)
+            _error(f"\nERROR: band {band_pos[k]} of '{basename2}' has only "
+                   f"zeros — please check it.\n")
 
     cpm = auxil.Cpm(2 * bands)
     oldrho = np.zeros(bands)
@@ -126,12 +142,15 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     results = []
     sigMADs = means1 = means2 = A = B = None
 
-    print(f'\nStop condition: max iteration {max_iters} with auto selection\n'
+    _info(f'\nStop condition: max iteration {max_iters} with auto selection\n'
           f'of the best delta for the final result:')
-    print(f' {ref_text + " ->"} iteration: 0, delta: 1.0 ({time.asctime()})')
+    _info(f' {ref_text + " ->"} iteration: 0, delta: 1.0 ({time.asctime()})')
 
     current_iter = 0
     while current_iter < max_iters:
+        if _canceled():
+            return
+
         try:
             # ---- pass 1: accumulate weighted covariance over the full image
             for ry, nr in _iter_row_blocks(rows, block_rows):
@@ -213,22 +232,41 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
             B = B * sgn_cov
 
             current_iter += 1
-            print(f' {ref_text + " ->"} iteration: {current_iter}, '
+            _info(f' {ref_text + " ->"} iteration: {current_iter}, '
                   f'delta: {round(delta, 5)} ({time.asctime()})')
             results.append((delta, {"iter": current_iter, "A": A, "B": B,
                                     "means1": means1, "means2": means2,
                                     "sigMADs": sigMADs, "rho": rho}))
+
+            if feedback is not None:
+                # Report progress in the 10–90% range that arrnorm.py
+                # allocates for the IR-MAD step (0→10% = clipper, 90→100% = radcal+mask).
+                feedback.setProgress(10 + int(80 * current_iter / max_iters))
+
         except Exception as err:
-            print(f"\n WARNING: exception at iteration {current_iter}: {err}\n"
-                  f" Falling back to best-delta result computed so far. "
-                  f"Verify the input bands.\n")
+            _info(
+                f"\n WARNING: exception at iteration {current_iter}: {err}\n"
+                f" Falling back to best-delta result computed so far. "
+                f"Verify the input bands.\n")
             current_iter = max_iters  # exit the while-loop
 
         if current_iter == max_iters:
+            # Guard: if every iteration failed, results is empty
+            if not results:
+                _error(
+                    f"\n ERROR: All {max_iters} iteration(s) failed without producing "
+                    f"any valid result.\n"
+                    f" Common causes:\n"
+                    f"  - Reference and target have different pixel dimensions or "
+                    f"extents after clipping\n"
+                    f"  - Mismatched coordinate reference systems\n"
+                    f"  - One or more bands contain only zeros or nodata\n"
+                    f" Check the warnings above for the specific error that occurred.\n")
+
             # Pick the iteration with the smallest delta — the run with the
             # most-converged canonical correlations.
             best = sorted(results, key=itemgetter(0))[0]
-            print(f"\n Best delta over all iterations: {round(best[0], 5)} "
+            _info(f"\n Best delta over all iterations: {round(best[0], 5)} "
                   f"(iteration {best[1]['iter']}). "
                   f"Final result computed with those parameters.")
             delta = best[0]
@@ -240,7 +278,7 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
             rho = best[1]["rho"]
             del results
 
-    print(f'\nRHO: {rho}')
+    _info(f'\nRHO: {rho}')
 
     # ---- write MAD variates + chi-square band to disk
     driver = inDataset1.GetDriver()
@@ -270,8 +308,8 @@ def main(img_ref, img_target, max_iters=30, band_pos=None, dims=None,
     inDataset1 = None
     inDataset2 = None
 
-    print('result written to: ' + outfn)
-    print(f'elapsed time: {time.time() - start:.2f}s')
+    _info('result written to: ' + outfn)
+    _info(f'elapsed time: {time.time() - start:.2f}s')
 
     if graphics:
         try:

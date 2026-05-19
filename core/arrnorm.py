@@ -30,38 +30,51 @@ from ArrNorm.core import iMad, radcal
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata, nodata_mask, output_file, feedback):
+    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata,
+                 mask_ref, mask_ref_nodata, nodata_mask, nodata_mask_value, keep_mask_layer,
+                 output_file, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
         self.prob_thres = prob_thres
         self.neg_to_nodata = neg_to_nodata
+        self.mask_ref = mask_ref
         self.nodata_mask = nodata_mask
+        self.keep_mask_layer = keep_mask_layer
         self.output_file = output_file
         self.feedback = feedback
 
+        self.img_ref_clip = img_ref  # safe default if clean() is called before clipper()
         self.img_imad = None
         self.img_norm = None
         self.no_neg = None
         self.norm_masked = None
+        self.mask_file = None
 
         # Output dtype: use the higher-precision type of the two inputs.
         ref_ds = gdal.Open(self.img_ref, GA_ReadOnly)
-        ref_dtype_code = ref_ds.GetRasterBand(1).DataType
+        ref_band = ref_ds.GetRasterBand(1)
+        ref_dtype_code = ref_band.DataType
+        ref_nodata = ref_band.GetNoDataValue()
+        ref_band = None
         ref_ds = None
 
         target_ds = gdal.Open(self.img_target, GA_ReadOnly)
         target_band = target_ds.GetRasterBand(1)
         target_dtype_code = target_band.DataType
-        target_nodata    = target_band.GetNoDataValue()
+        target_nodata = target_band.GetNoDataValue()
         target_band = None
         target_ds = None
 
         self.out_dtype = max(ref_dtype_code, target_dtype_code)
 
-        # Nodata value used when building and applying the validity mask.
-        # Priority: image-embedded nodata value > fallback 0.
-        self.mask_nodata = target_nodata if target_nodata is not None else 0
+        # Nodata value for output masking: user-provided > auto-detect from target > 0.
+        self.mask_nodata = (nodata_mask_value if nodata_mask_value is not None
+                            else (target_nodata if target_nodata is not None else 0))
+
+        # Nodata value for reference masking: user-provided > auto-detect from reference > 0.
+        self.ref_mask_nodata = (mask_ref_nodata if mask_ref_nodata is not None
+                                else (ref_nodata if ref_nodata is not None else 0))
 
     def run(self):
 
@@ -119,6 +132,9 @@ class Normalization:
         This guarantees that every (row, col) position in the clipped reference
         corresponds spatially to the identical ground location in the target,
         which is required for the pixel-by-pixel IR-MAD and Radcal correlation.
+
+        When mask_ref is enabled, nodata masking is applied in the same gdal.Warp
+        pass via srcNodata/dstNodata — no extra processing step is needed.
         """
 
         # Read target and reference geotransform metadata
@@ -138,23 +154,32 @@ class Normalization:
 
         # Perfect alignment: same CRS, same origin + pixel size (geotransform), same dimensions.
         # Only then is the reference already on the identical pixel grid as the target.
-        if (ref_proj == target_proj
-                and ref_gt == target_gt
-                and ref_cols == target_cols
-                and ref_rows == target_rows):
+        already_aligned = (ref_proj == target_proj
+                           and ref_gt == target_gt
+                           and ref_cols == target_cols
+                           and ref_rows == target_rows)
+
+        if already_aligned and not self.mask_ref:
             self.feedback.pushInfo(
                 "\nReference image is already perfectly aligned with target "
                 "(same CRS, geotransform and dimensions). No clipping needed.\n")
             self.img_ref_clip = self.img_ref
             return
 
-        self.feedback.pushInfo(
-            "\nReprojecting/aligning reference image to target pixel grid "
-            "(CRS: {crs}, resolution: {pixW:.6g} x {pixH:.6g}, "
-            "dimensions: {cols} x {rows})\n".format(
-                crs=target_proj[:50] if target_proj else 'unknown',
-                pixW=target_gt[1], pixH=abs(target_gt[5]),
-                cols=target_cols, rows=target_rows))
+        if already_aligned:
+            self.feedback.pushInfo(
+                "\nReference image is already aligned with target. "
+                "Applying nodata masking (nodata value: {nd}).\n".format(nd=self.ref_mask_nodata))
+        else:
+            self.feedback.pushInfo(
+                "\nReprojecting/aligning reference image to target pixel grid "
+                "(CRS: {crs}, resolution: {pixW:.6g} x {pixH:.6g}, "
+                "dimensions: {cols} x {rows}{mask})\n".format(
+                    crs=target_proj[:50] if target_proj else 'unknown',
+                    pixW=target_gt[1], pixH=abs(target_gt[5]),
+                    cols=target_cols, rows=target_rows,
+                    mask=", with nodata masking (nodata value: {nd})".format(
+                        nd=self.ref_mask_nodata) if self.mask_ref else ""))
 
         filename, ext = os.path.splitext(os.path.basename(self.img_ref))
         self.img_ref_clip = os.path.join(
@@ -163,35 +188,49 @@ class Normalization:
         )
 
         try:
-            # Derive exact output bounds from the target's geotransform values.
-            # Using the raw geotransform avoids any floating-point rounding that
-            # would occur from intermediate extent string/float conversions.
-            xmin = target_gt[0]                              # left edge
-            ymax = target_gt[3]                              # top edge
-            xmax = xmin + target_gt[1] * target_cols        # right edge
-            ymin = ymax + target_gt[5] * target_rows        # bottom edge (gt[5] < 0)
+            if already_aligned:
+                # Reference is on the correct grid — single-pass copy with nodata masking applied.
+                result = gdal.Warp(
+                    self.img_ref_clip, self.img_ref,
+                    format='GTiff',
+                    srcNodata=self.ref_mask_nodata,
+                    dstNodata=self.ref_mask_nodata,
+                )
+            else:
+                # Derive exact output bounds from the target's geotransform values.
+                # Using the raw geotransform avoids any floating-point rounding that
+                # would occur from intermediate extent string/float conversions.
+                xmin = target_gt[0]                              # left edge
+                ymax = target_gt[3]                              # top edge
+                xmax = xmin + target_gt[1] * target_cols        # right edge
+                ymin = ymax + target_gt[5] * target_rows        # bottom edge (gt[5] < 0)
 
-            # gdal.Warp with dstSRS + geotransform-derived outputBounds + exact width/height:
-            #   dstSRS        → reproject reference to target CRS (no-op if already the same)
-            #   outputBounds  → clip/pad to the exact target extent (in target-CRS coordinates)
-            #   width/height  → force exactly target_cols x target_rows output pixels
-            #
-            # Together these parameters make the output geotransform identical to the target's,
-            # guaranteeing pixel-for-pixel spatial coincidence for IR-MAD and Radcal.
-            result = gdal.Warp(
-                self.img_ref_clip, self.img_ref,
-                format='GTiff',
-                dstSRS=target_proj,
-                outputBounds=(xmin, ymin, xmax, ymax),  # (minX, minY, maxX, maxY)
-                width=target_cols,
-                height=target_rows,
-                resampleAlg=gdal.GRA_Bilinear,
-            )
+                # gdal.Warp with dstSRS + geotransform-derived outputBounds + exact width/height:
+                #   dstSRS        → reproject reference to target CRS (no-op if already the same)
+                #   outputBounds  → clip/pad to the exact target extent (in target-CRS coordinates)
+                #   width/height  → force exactly target_cols x target_rows output pixels
+                #
+                # Together these parameters make the output geotransform identical to the target's,
+                # guaranteeing pixel-for-pixel spatial coincidence for IR-MAD and Radcal.
+                warp_kwargs = dict(
+                    format='GTiff',
+                    dstSRS=target_proj,
+                    outputBounds=(xmin, ymin, xmax, ymax),  # (minX, minY, maxX, maxY)
+                    width=target_cols,
+                    height=target_rows,
+                    resampleAlg=gdal.GRA_Bilinear,
+                )
+                if self.mask_ref:
+                    warp_kwargs['srcNodata'] = self.ref_mask_nodata
+                    warp_kwargs['dstNodata'] = self.ref_mask_nodata
+
+                result = gdal.Warp(self.img_ref_clip, self.img_ref, **warp_kwargs)
+
             if result is None:
                 raise RuntimeError('gdal.Warp returned None — check GDAL error log.')
             result = None  # close/release the output dataset
             self.feedback.pushInfo(
-                'Reference aligned successfully: ' + os.path.basename(self.img_ref_clip))
+                'Reference prepared successfully: ' + os.path.basename(self.img_ref_clip))
         except Exception as e:
             self.clean()
             raise QgsProcessingException('\nError clipping/reprojecting reference image: ' + str(e))
@@ -200,11 +239,9 @@ class Normalization:
         # ======================================
         # iMad process
 
-        img_target = self.img_target
-
         self.feedback.pushInfo("\niMad process for:\n" +
-              os.path.basename(self.img_ref) + " " + os.path.basename(self.img_target))
-        self.img_imad = iMad.main(self.img_ref_clip, img_target, max_iters=self.max_iters, feedback=self.feedback)
+              os.path.basename(self.img_ref_clip) + " " + os.path.basename(self.img_target))
+        self.img_imad = iMad.main(self.img_ref_clip, self.img_target, max_iters=self.max_iters, feedback=self.feedback)
 
     def radcal(self):
         # ======================================
@@ -214,10 +251,10 @@ class Normalization:
         self.img_norm = os.path.join(os.path.dirname(os.path.abspath(self.img_target)), filename + "_radcal" + ext)
 
         self.feedback.pushInfo("\nRadcal process for\n" +
-              os.path.basename(self.img_ref) + " " + os.path.basename(self.img_target) + " " +
+              os.path.basename(self.img_ref_clip) + " " + os.path.basename(self.img_target) +
               " with iMad image: " + os.path.basename(self.img_imad))
         radcal.main(self.img_imad, img_ref=self.img_ref_clip, img_tgt=self.img_target, output=self.img_norm,
-                    ncpThresh=self.prob_thres, out_dtype=self.out_dtype)
+                    ncpThresh=self.prob_thres, out_dtype=self.out_dtype, feedback=self.feedback)
 
     def no_negative_value(self, image):
         # ======================================
@@ -238,18 +275,17 @@ class Normalization:
 
     def make_mask(self):
         # ======================================
-        # Make mask
+        # Make nodata mask from target image
 
         img_to_process = self.img_target
 
-        self.feedback.pushInfo('\nMaking mask for\n' +
-              os.path.basename(self.img_target) + " " + os.path.basename(img_to_process))
+        self.feedback.pushInfo('\nMaking nodata mask (nodata value: {nd}) for target image:\n'.format(
+              nd=self.mask_nodata) + os.path.basename(img_to_process))
 
         filename, ext = os.path.splitext(os.path.basename(self.output_file))
         self.mask_file = os.path.join(os.path.dirname(os.path.abspath(self.output_file)), filename + "_Mask" + ext)
 
         try:
-            # Use the actual nodata value from the image metadata (resolved in __init__).
             # "1*(A!=nodata)" is more general than the old "1*(A>0)" which incorrectly
             # treated negative values (valid in some sensor products) as nodata.
             gdal_calc(A=img_to_process, outfile=self.mask_file,
@@ -273,12 +309,12 @@ class Normalization:
 
     def apply_mask(self, image):
         # ======================================
-        # Apply mask to image normalized
+        # Apply nodata mask to normalized output
 
         filename, ext = os.path.splitext(os.path.basename(self.img_target))
         self.norm_masked = os.path.join(os.path.dirname(os.path.abspath(self.img_target)), filename + "_norm_masked" + ext)
 
-        self.feedback.pushInfo('\nApplying mask for\n' +
+        self.feedback.pushInfo('\nApplying nodata mask to\n' +
               os.path.basename(self.img_target) + " " + os.path.basename(image))
 
         try:
@@ -299,6 +335,9 @@ class Normalization:
         os.remove(self.img_norm) if self.img_norm and os.path.exists(self.img_norm) else None
         os.remove(self.no_neg) if self.no_neg and os.path.exists(self.no_neg) else None
         os.remove(self.norm_masked) if self.norm_masked and os.path.exists(self.norm_masked) else None
+        # delete mask layer only if user did not ask to keep it
+        if not self.keep_mask_layer:
+            os.remove(self.mask_file) if self.mask_file and os.path.exists(self.mask_file) else None
 
 
 def get_extent_from_raster(raster_path):

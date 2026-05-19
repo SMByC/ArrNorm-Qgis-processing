@@ -40,12 +40,25 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     IMG_REF = 'IMG_REF'
+    IMG_TARGET = 'IMG_TARGET'
     MAX_ITERS = 'MAX_ITERS'
     PROB_THRES = 'PROB_THRES'
     NEG_TO_NODATA = 'NEG_TO_NODATA'
+    MASK_REF = 'MASK_REF'
+    MASK_REF_NODATA = 'MASK_REF_NODATA'
     NODATA_MASK = 'NODATA_MASK'
-    IMG_TARGET = 'IMG_TARGET'
+    NODATA_MASK_VALUE = 'NODATA_MASK_VALUE'
+    KEEP_MASK_LAYER = 'KEEP_MASK_LAYER'
     OUTPUT = 'OUTPUT'
+
+    # Value-less parameters used only to render section headers in the dialog.
+    SECTION_REF_MASK = 'SECTION_REF_MASK'
+    SECTION_OUTPUT = 'SECTION_OUTPUT'
+
+    # Dotted path so the Processing framework imports the GUI wrapper lazily
+    # (only when building the dialog), keeping headless execution import-safe.
+    _NODATA_WRAPPER = 'ArrNorm.gui.wrappers.ImageNodataWidgetWrapper'
+    _SECTION_WRAPPER = 'ArrNorm.gui.wrappers.SectionHeaderWidgetWrapper'
 
     def __init__(self):
         super().__init__()
@@ -62,14 +75,28 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         parameters and outputs associated with it.
         """
         html_help = '''
-        <p>ArrNorm is a Qgis processing plugin for apply the radiometric normalization to the target image \
-        based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative \
-        radiometric normalization.</p>
-        <p>Stop condition is set by max iteration or with a minimum no-change probability threshold. With more \
-        iterations the algorithm try to find a better match to the reference image, decreasing the delta, the plugin \
-        select the best delta for the final result. However, after several iterations the changes in the delta are \
-        imperceptible.</p>
-        <p>Note: For now, this plugin only takes values of zeros as nodata, so adjust the data accordingly.</p>
+        <p>ArrNorm applies relative radiometric normalization to a <b>target image</b> using a \
+        <b>reference image</b>. By leveraging the linear and affine invariance of the MAD \
+        transformation, the IR-MAD algorithm identifies spectrally invariant pixels between the \
+        two images, and Radcal fits a per-band linear regression on those pixels to produce the \
+        normalized output.</p>
+
+        <p>If the reference and target images are not on the same pixel grid, the reference is \
+        automatically reprojected and clipped to match the target before processing.</p>
+
+        <p><b>&#9888; Nodata masking is strongly recommended when nodata pixels are present.</b> \
+        Nodata values are arbitrary fill numbers that do not represent actual surface reflectance. \
+        Because IR-MAD relies on the multivariate covariance structure of all pixel pairs, these \
+        fill values act as extreme outliers that distort the statistical model. Leaving nodata \
+        unmasked can corrupt the covariance matrix, shift the canonical variates away from true \
+        spectral change directions, and bias the per-band regression coefficients, propagating \
+        radiometric errors across the entire normalized output. Masking nodata before processing \
+        removes these outliers and yields a more accurate normalization.</p>
+
+        <p><b>Advanced</b><br/>
+        The IR-MAD iteration stops when the maximum number of iterations is reached or when the \
+        no-change probability threshold is met. The plugin automatically selects the iteration \
+        with the smallest change delta as the final result.</p>
         '''
         return html_help
 
@@ -119,20 +146,125 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         with some other properties.
         """
 
+        # Section-header pseudo parameters give the dialog real visual groups.
+        # They carry no value and are import-guarded so headless execution
+        # (where qgis.gui may be absent) is never affected.
+        try:
+            from ArrNorm.gui.wrappers import ParameterSectionHeader
+        except Exception:
+            ParameterSectionHeader = None
+
+        def add_section(name, title):
+            if ParameterSectionHeader is None:
+                return
+            section = ParameterSectionHeader(name, self.tr(title))
+            section.setMetadata({'widget_wrapper': {'class': self._SECTION_WRAPPER}})
+            self.addParameter(section)
+
+        # =====================================================================
+        # Reference image masking (applied before processing)
+        #
+        # The custom ImageNodataWidgetWrapper enables the nodata field only
+        # while its checkbox is checked, and auto-fills it with the nodata
+        # value embedded in the bound raster layer. When the wrapper is not
+        # used (batch / modeler / headless) the value contract is unchanged:
+        # an empty value (None) still means "auto-detect from the image".
+        # =====================================================================
+
+        add_section(self.SECTION_REF_MASK, 'Reference image')
+
         self.addParameter(
             QgsProcessingParameterRasterLayer(
                 self.IMG_REF,
-                self.tr('The REFERENCE image:'),
+                self.tr('Reference image as a basis for normalization'),
                 optional=False
             )
         )
 
         self.addParameter(
-            QgsProcessingParameterRasterLayer(
-                self.IMG_TARGET,
-                self.tr('The TARGET image to normalize:')
+            QgsProcessingParameterBoolean(
+                self.MASK_REF,
+                self.tr('Mask nodata in reference image before processing'),
+                defaultValue=False,
+                optional=True
             )
         )
+
+        mask_ref_nodata = QgsProcessingParameterNumber(
+            self.MASK_REF_NODATA,
+            self.tr('Reference nodata value'),
+            type=QgsProcessingParameterNumber.Type.Double,
+            optional=True,
+            defaultValue=None
+        )
+        mask_ref_nodata.setMetadata({
+            'widget_wrapper': {
+                'class': self._NODATA_WRAPPER,
+                'enabled_by': self.MASK_REF,
+                'layer_param': self.IMG_REF,
+            }
+        })
+        self.addParameter(mask_ref_nodata)
+
+        # =====================================================================
+        # Target/output image processing
+        # =====================================================================
+
+        add_section(self.SECTION_OUTPUT, 'Target/output image')
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.IMG_TARGET,
+                self.tr('Target image to normalize')
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.NODATA_MASK,
+                self.tr('Mask nodata in target image before processing (and output)'),
+                defaultValue=True,
+                optional=True
+            )
+        )
+
+        nodata_mask_value = QgsProcessingParameterNumber(
+            self.NODATA_MASK_VALUE,
+            self.tr('Target and output nodata value'),
+            type=QgsProcessingParameterNumber.Type.Double,
+            optional=True,
+            defaultValue=None
+        )
+        nodata_mask_value.setMetadata({
+            'widget_wrapper': {
+                'class': self._NODATA_WRAPPER,
+                'enabled_by': self.NODATA_MASK,
+                'layer_param': self.IMG_TARGET,
+            }
+        })
+        self.addParameter(nodata_mask_value)
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.NEG_TO_NODATA,
+                self.tr('Convert negative values to nodata in normalized output'),
+                defaultValue=False,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.KEEP_MASK_LAYER,
+                self.tr('Keep the nodata mask as a separate file'),
+                defaultValue=False,
+                optional=True
+            )
+        )
+
+        # =====================================================================
+        # Advanced: algorithm tuning
+        # =====================================================================
 
         parameter = \
             QgsProcessingParameterNumber(
@@ -156,30 +288,14 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter)
 
-        parameter = \
-            QgsProcessingParameterBoolean(
-                self.NEG_TO_NODATA,
-                self.tr('Convert negative values to nodata (0) to result'),
-                defaultValue=False,
-                optional=True
-            )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
-        self.addParameter(parameter)
-
-        parameter = \
-            QgsProcessingParameterBoolean(
-                self.NODATA_MASK,
-                self.tr('Mask nodata values (0) to result'),
-                defaultValue=True,
-                optional=True
-            )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
-        self.addParameter(parameter)
+        # =====================================================================
+        # Output
+        # =====================================================================
 
         self.addParameter(
             QgsProcessingParameterRasterDestination(
                 self.OUTPUT,
-                self.tr('Output raster file normalized')
+                self.tr('Normalized output raster')
             )
         )
 
@@ -189,17 +305,41 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         """
 
         def get_inputfilepath(layer):
-            return os.path.realpath(layer.source().split("|layername")[0])
+            source = layer.source()
+            # Strip QGIS layername suffix if present (e.g. GeoPackage layers)
+            path = source.split("|layername")[0]
+            # Handle database/WMS/in-memory sources that aren't file paths
+            if not os.path.exists(path):
+                feedback.reportError(f"Reference/target source is not a valid file path: {path}")
+                return None
+            return os.path.realpath(path)
 
         output_file = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
+
+        # Optional nodata values: None means auto-detect from the respective image.
+        mask_ref_nodata_raw = parameters.get(self.MASK_REF_NODATA)
+        if mask_ref_nodata_raw is not None and str(mask_ref_nodata_raw).strip():
+            mask_ref_nodata = float(mask_ref_nodata_raw)
+        else:
+            mask_ref_nodata = None
+
+        nodata_mask_value_raw = parameters.get(self.NODATA_MASK_VALUE)
+        if nodata_mask_value_raw is not None and str(nodata_mask_value_raw).strip():
+            nodata_mask_value = float(nodata_mask_value_raw)
+        else:
+            nodata_mask_value = None
 
         arrnorm = Normalization(
             img_ref=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_REF, context)),
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
-            max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context),
-            prob_thres= self.parameterAsDouble(parameters, self.PROB_THRES, context),
+            max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context) or 25,
+            prob_thres=self.parameterAsDouble(parameters, self.PROB_THRES, context) or 0.95,
             neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
+            mask_ref=self.parameterAsBoolean(parameters, self.MASK_REF, context),
+            mask_ref_nodata=mask_ref_nodata,
             nodata_mask=self.parameterAsBoolean(parameters, self.NODATA_MASK, context),
+            nodata_mask_value=nodata_mask_value,
+            keep_mask_layer=self.parameterAsBoolean(parameters, self.KEEP_MASK_LAYER, context),
             output_file=output_file,
             feedback=feedback)
 

@@ -25,7 +25,12 @@ import scipy.ndimage as ndii
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly
 
-from core.auxil.auxil import similarity
+from ArrNorm.core.auxil import auxil
+
+try:
+    from qgis.core import QgsProcessingException
+except ImportError:
+    QgsProcessingException = Exception
 
 usage = '''
 Usage:
@@ -41,14 +46,29 @@ def _chunks(seq, n):
     return [seq[i:i + n] for i in range(0, len(seq), n)]
 
 
-def main(img_ref, img_target, warpband=2, chunksize=None):
+def main(img_ref, img_target, warpband=2, chunksize=None, feedback=None):
     gdal.AllRegister()
 
-    print('------------REGISTER-------------')
-    print(time.asctime())
-    print(f'reference image: {img_ref}')
-    print(f'warp image: {img_target}')
-    print(f'warp band: {warpband}')
+    # -- Logging helpers: use QGIS feedback when available, print otherwise --
+    def _info(msg):
+        if feedback is not None:
+            feedback.pushInfo(msg)
+        else:
+            print(msg)
+
+    def _error(msg):
+        if feedback is not None:
+            feedback.reportError(msg, fatalError=True)
+        raise QgsProcessingException(msg)
+
+    def _canceled():
+        return feedback is not None and feedback.isCanceled()
+
+    _info('------------REGISTER-------------')
+    _info(time.asctime())
+    _info(f'reference image: {img_ref}')
+    _info(f'warp image: {img_target}')
+    _info(f'warp band: {warpband}')
 
     start = time.time()
 
@@ -60,8 +80,7 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
     inDataset1 = gdal.Open(img_ref, GA_ReadOnly)
     inDataset2 = gdal.Open(img_target, GA_ReadOnly)
     if inDataset1 is None or inDataset2 is None:
-        sys.stderr.write('Error: input image(s) could not be opened.\n')
-        sys.exit(1)
+        _error('Error: input image(s) could not be opened.')
 
     ref_band = inDataset1.GetRasterBand(warpband)
     tgt_band = inDataset2.GetRasterBand(warpband)
@@ -88,6 +107,9 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
     blocks_files = []
     for y_idx_block, y_block in enumerate(y_chunks):
         for x_idx_block, x_block in enumerate(x_chunks):
+            if _canceled():
+                return
+
             x0 = x_block[0]
             y0 = y_block[0]
             cols_blk = len(x_block)
@@ -100,7 +122,7 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
             # Estimate similarity transform on this block
             ref_tile = ref_band.ReadAsArray(x0, y0, cols_blk, rows_blk).astype(np.float32)
             warp_tile = tgt_band.ReadAsArray(x0, y0, cols_blk, rows_blk).astype(np.float32)
-            scale, angle, shift = similarity(ref_tile, warp_tile)
+            scale, angle, shift = auxil.similarity(ref_tile, warp_tile)
 
             driver = inDataset2.GetDriver()
             outDataset = driver.Create(block_filename, cols_blk, rows_blk,
@@ -134,10 +156,9 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
     # surprises, and we get the error message back as a Python exception.
     warp_result = gdal.Warp(outfn, blocks_files, format='GTiff')
     if warp_result is None:
-        sys.stderr.write('Error: gdal.Warp failed to mosaic block files.\n')
-        sys.exit(1)
+        _error('Error: gdal.Warp failed to mosaic block files.')
     warp_result = None
-    print('mosaic created successfully')
+    _info('mosaic created successfully')
 
     # delete the temporary block files
     for chunk_file in blocks_files:
@@ -148,8 +169,8 @@ def main(img_ref, img_target, warpband=2, chunksize=None):
 
     inDataset1 = None
     inDataset2 = None
-    print(f'Warped image written to: {outfn}')
-    print(f'elapsed time: {time.time() - start:.2f}s')
+    _info(f'Warped image written to: {outfn}')
+    _info(f'elapsed time: {time.time() - start:.2f}s')
 
     return outfn
 

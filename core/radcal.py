@@ -25,7 +25,12 @@ from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly
 from scipy import stats
 
-from core.auxil.auxil import orthoregress
+from ArrNorm.core.auxil.auxil import orthoregress
+
+try:
+    from qgis.core import QgsProcessingException
+except ImportError:
+    QgsProcessingException = Exception
 
 try:
     import matplotlib
@@ -72,7 +77,23 @@ def _clip_for_dtype(arr, gdal_dtype):
 
 
 def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
-         graphics=False, out_dtype=None):
+         graphics=False, out_dtype=None, img_ref=None, img_tgt=None,
+         output=None, feedback=None):
+
+    # -- Logging helpers: use QGIS feedback when available, print otherwise --
+    def _info(msg):
+        if feedback is not None:
+            feedback.pushInfo(msg)
+        else:
+            print(msg)
+
+    def _error(msg):
+        if feedback is not None:
+            feedback.reportError(msg, fatalError=True)
+        raise QgsProcessingException(msg)
+
+    def _canceled():
+        return feedback is not None and feedback.isCanceled()
 
     if img_target is not None:
         path = os.path.dirname(img_target)
@@ -80,21 +101,22 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
         root, ext = os.path.splitext(basename)
         fsoutfn = os.path.join(path, root + '_norm_all' + ext)
 
-    path = os.path.dirname(img_imad)
+    # Derive reference/target/output paths from the iMAD filename unless
+    # explicitly provided (the QGIS plugin passes them directly).
+    path = os.path.dirname(os.path.abspath(img_imad))
     basename = os.path.basename(img_imad)
     root, ext = os.path.splitext(basename)
     b = root.find('(')
     err_idx = root.find(')')
     referenceroot, targetbasename = root[b + 1:err_idx].split('&')
-    referencefn = os.path.join(path, referenceroot + ext)
-    targetfn = os.path.join(path, targetbasename)
+    referencefn = img_ref if img_ref is not None else os.path.join(path, referenceroot + ext)
+    targetfn = img_tgt if img_tgt is not None else os.path.join(path, targetbasename)
     targetroot, targetext = os.path.splitext(targetbasename)
-    outfn = os.path.join(path, targetroot + '_norm' + targetext)
+    outfn = output if output is not None else os.path.join(path, targetroot + '_norm' + targetext)
 
     imadDataset = gdal.Open(img_imad, GA_ReadOnly)
     if imadDataset is None:
-        sys.stderr.write(f'Error: could not open iMAD file: {img_imad}\n')
-        sys.exit(1)
+        _error(f'Error: could not open iMAD file: {img_imad}')
     imadbands = imadDataset.RasterCount
     cols = imadDataset.RasterXSize
     rows = imadDataset.RasterYSize
@@ -102,8 +124,7 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     referenceDataset = gdal.Open(referencefn, GA_ReadOnly)
     targetDataset = gdal.Open(targetfn, GA_ReadOnly)
     if referenceDataset is None or targetDataset is None:
-        sys.stderr.write('Error: could not open reference/target image.\n')
-        sys.exit(1)
+        _error('Error: could not open reference/target image.')
 
     if pos is None:
         pos = list(range(1, referenceDataset.RasterCount + 1))
@@ -120,17 +141,16 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     chisqr = imadDataset.GetRasterBand(imadbands).ReadAsArray(0, 0, cols, rows).ravel()
     ncp = stats.chi2.sf(chisqr, imadbands - 1)
     idx = np.where(ncp > ncpThresh)
-    print(time.asctime())
-    print(f'reference: {referencefn}')
-    print(f'target   : {targetfn}')
-    print(f'no-change probability threshold: {ncpThresh}')
-    print(f'no-change pixels: {len(idx[0])}')
+    _info(time.asctime())
+    _info(f'reference: {referencefn}')
+    _info(f'target   : {targetfn}')
+    _info(f'no-change probability threshold: {ncpThresh}')
+    _info(f'no-change pixels: {len(idx[0])}')
 
     if len(idx[0]) < 2:
-        sys.stderr.write(
+        _error(
             f"Error: only {len(idx[0])} no-change pixels selected "
-            f"(threshold={ncpThresh}). Lower -t to keep more pixels.\n")
-        sys.exit(1)
+            f"(threshold={ncpThresh}). Lower -t to keep more pixels.")
 
     start = time.time()
     driver = targetDataset.GetDriver()
@@ -145,7 +165,7 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     aa = []
     bb = []
     if graphics and not _MPL_AVAILABLE:
-        print('Warning: matplotlib not available — graphics output disabled.')
+        _info('Warning: matplotlib not available — graphics output disabled.')
         graphics = False
 
     bands = len(pos)
@@ -175,10 +195,13 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
         )
 
     for j, k in enumerate(pos, start=1):
+        if _canceled():
+            return
+
         x = referenceDataset.GetRasterBand(k).ReadAsArray(x0, y0, cols, rows).astype(np.float64).ravel()
         y = targetDataset.GetRasterBand(k).ReadAsArray(x0, y0, cols, rows).astype(np.float64).ravel()
         b_slope, a_intercept, R = orthoregress(y[idx], x[idx])
-        print(f'band: {k}  slope: {b_slope:.6f}  intercept: {a_intercept:.6f}  correlation: {R:.6f}')
+        _info(f'band: {k}  slope: {b_slope:.6f}  intercept: {a_intercept:.6f}  correlation: {R:.6f}')
         if graphics and j <= 6:
             row, col = divmod(j - 1, 3)
             ax = axes[row][col]
@@ -259,18 +282,17 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
         )
         fig.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        print(f'radcal plot saved to: {plot_path}')
+        _info(f'radcal plot saved to: {plot_path}')
     referenceDataset = None
     targetDataset = None
     outDataset = None
-    print(f'result written to: {outfn}')
+    _info(f'result written to: {outfn}')
 
     if img_target is not None:
-        print(f'normalizing {img_target}...')
+        _info(f'normalizing {img_target}...')
         fsDataset = gdal.Open(img_target, GA_ReadOnly)
         if fsDataset is None:
-            sys.stderr.write(f'Error: full-scene file could not be opened: {img_target}\n')
-            sys.exit(1)
+            _error(f'Error: full-scene file could not be opened: {img_target}')
         fcols = fsDataset.RasterXSize
         frows = fsDataset.RasterYSize
         driver = fsDataset.GetDriver()
@@ -292,10 +314,10 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
             outBand.FlushCache()
         outDataset = None
         fsDataset = None
-        print(f'full result written to: {fsoutfn}')
+        _info(f'full result written to: {fsoutfn}')
         return fsoutfn
 
-    print(f'elapsed time: {time.time() - start:.2f}s')
+    _info(f'elapsed time: {time.time() - start:.2f}s')
     return outfn
 
 
