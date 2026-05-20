@@ -30,13 +30,14 @@ from ArrNorm.core import iMad, radcal
 
 
 class Normalization:
-    def __init__(self, img_ref, img_target, max_iters, prob_thres, neg_to_nodata,
+    def __init__(self, img_ref, img_target, max_iters, conv_threshold, ncp_threshold, neg_to_nodata,
                  mask_ref, mask_ref_nodata, nodata_mask, nodata_mask_value, keep_mask_layer,
                  output_file, feedback):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
-        self.prob_thres = prob_thres
+        self.conv_threshold = conv_threshold
+        self.ncp_threshold = ncp_threshold
         self.neg_to_nodata = neg_to_nodata
         self.mask_ref = mask_ref
         self.nodata_mask = nodata_mask
@@ -241,7 +242,7 @@ class Normalization:
 
         self.feedback.pushInfo("\niMad process for:\n" +
               os.path.basename(self.img_ref_clip) + " " + os.path.basename(self.img_target))
-        self.img_imad = iMad.main(self.img_ref_clip, self.img_target, max_iters=self.max_iters, feedback=self.feedback)
+        self.img_imad = iMad.main(self.img_ref_clip, self.img_target, max_iters=self.max_iters, conv_threshold=self.conv_threshold, feedback=self.feedback)
 
     def radcal(self):
         # ======================================
@@ -254,7 +255,7 @@ class Normalization:
               os.path.basename(self.img_ref_clip) + " " + os.path.basename(self.img_target) +
               " with iMad image: " + os.path.basename(self.img_imad))
         radcal.main(self.img_imad, img_ref=self.img_ref_clip, img_tgt=self.img_target, output=self.img_norm,
-                    ncpThresh=self.prob_thres, out_dtype=self.out_dtype, feedback=self.feedback)
+                    ncp_threshold=self.ncp_threshold, out_dtype=self.out_dtype, feedback=self.feedback)
 
     def no_negative_value(self, image):
         # ======================================

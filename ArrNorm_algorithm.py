@@ -42,7 +42,8 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
     IMG_REF = 'IMG_REF'
     IMG_TARGET = 'IMG_TARGET'
     MAX_ITERS = 'MAX_ITERS'
-    PROB_THRES = 'PROB_THRES'
+    CONV_THRESHOLD = 'CONV_THRESHOLD'
+    NCP_THRESHOLD = 'NCP_THRESHOLD'
     NEG_TO_NODATA = 'NEG_TO_NODATA'
     MASK_REF = 'MASK_REF'
     MASK_REF_NODATA = 'MASK_REF_NODATA'
@@ -93,10 +94,16 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         radiometric errors across the entire normalized output. Masking nodata before processing \
         removes these outliers and yields a more accurate normalization.</p>
 
-        <p><b>Advanced</b><br/>
-        The IR-MAD iteration stops when the maximum number of iterations is reached or when the \
-        no-change probability threshold is met. The plugin automatically selects the iteration \
-        with the smallest change delta as the final result.</p>
+        <b>IR-MAD convergence threshold</b> (default 0.99) — Controls when the iterative algorithm stops. \
+        The iteration halts when the maximum change in canonical correlations (δ) between successive \
+        iterations falls below 1 − threshold (e.g. 0.99 → δ &lt; 0.01). Higher values enforce tighter \
+        convergence, yielding more stable no-change weights. Use 0.99 for most cases; 0.999 for \
+        maximum precision.<br/>
+        <b>No-change pixel probability threshold</b> (default 0.95) — Determines which pixels are used for \
+        radiometric calibration. After IR-MAD converges, each pixel receives a chi-square no-change \
+        probability; only pixels above this threshold are included in the per-band regression. Higher \
+        values select fewer but more reliable invariant pixels. If set too high, the algorithm may fail \
+        due to insufficient no-change pixels.</p>
         '''
         return html_help
 
@@ -279,8 +286,19 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
 
         parameter = \
             QgsProcessingParameterNumber(
-                self.PROB_THRES,
-                self.tr('No-change probability threshold'),
+                self.CONV_THRESHOLD,
+                self.tr('IR-MAD convergence threshold'),
+                type=QgsProcessingParameterNumber.Type.Double,
+                defaultValue=0.99,
+                optional=True
+            )
+        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        self.addParameter(parameter)
+
+        parameter = \
+            QgsProcessingParameterNumber(
+                self.NCP_THRESHOLD,
+                self.tr('No-change pixel probability threshold'),
                 type=QgsProcessingParameterNumber.Type.Double,
                 defaultValue=0.95,
                 optional=True
@@ -333,7 +351,8 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             img_ref=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_REF, context)),
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
             max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context) or 25,
-            prob_thres=self.parameterAsDouble(parameters, self.PROB_THRES, context) or 0.95,
+            conv_threshold=self.parameterAsDouble(parameters, self.CONV_THRESHOLD, context) or 0.99,
+            ncp_threshold=self.parameterAsDouble(parameters, self.NCP_THRESHOLD, context) or 0.95,
             neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
             mask_ref=self.parameterAsBoolean(parameters, self.MASK_REF, context),
             mask_ref_nodata=mask_ref_nodata,

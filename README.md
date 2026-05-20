@@ -1,6 +1,6 @@
 # ArrNorm
 
-ArrNorm is a Qgis processing plugin for applying the radiometric normalization to the target image based on reference image using the IR-MAD algorithm to locate invariant/variant pixels for a relative radiometric normalization.
+ArrNorm is a QGIS processing plugin for relative radiometric normalization of a target image against a reference image, using the IR-MAD algorithm to identify spectrally invariant pixels.
 
 ## Compatibility
 
@@ -9,10 +9,12 @@ ArrNorm is a Qgis processing plugin for applying the radiometric normalization t
 | QGIS 3.16+ | Qt 5 | PyQt5 | 3.9+ |
 | QGIS 4.x | Qt 6 | PyQt6 | 3.9+ |
 
-The algorithm takes advantage of the linear and affine invariance of the Multivariate alteration detection (MAD)
-transformation to perform a relative radiometric normalization of the images involved in the transformation, using the correlation of the iteratively reweighted MAD (IR-MAD) [1]
+The algorithm exploits the linear and affine invariance of the Multivariate Alteration Detection (MAD) transformation to perform relative radiometric normalization via two stages [1]:
 
-Stop condition is set by max iteration or with a minimum no-change probability threshold. With more iterations the algorithm tries to find a better match to the reference image, decreasing the delta, the plugin selects the best delta for the final result. However, after several iterations the changes in the delta are imperceptible.
+1. **IR-MAD** — Iteratively Reweighted MAD finds spectrally invariant (no-change) pixels by solving a canonical correlation problem and reweighting pixels by their chi-square no-change probability across iterations.
+2. **Radcal** — A per-band orthogonal regression is fitted on the no-change pixels to derive the linear transform (intercept + slope) applied to the target.
+
+The IR-MAD iteration stops when the maximum change in canonical correlations between successive iterations (δ) falls below the convergence threshold, or when the maximum number of iterations is reached. When the maximum is reached, the plugin automatically selects the iteration with the smallest δ as the final result. A separate no-change pixel probability threshold then controls which pixels are admitted to the per-band regression in Radcal.
 
 [1] M. J. Canty (2014): Image Analysis, Classification and Change Detection in Remote Sensing, with Algorithms for ENVI/IDL and Python (Third Revised Edition), Taylor and Francis CRC Press.
 
@@ -22,9 +24,7 @@ Stop condition is set by max iteration or with a minimum no-change probability t
 
 ---
 
-> *Note 1:* For now, this plugin only takes values of zeros as nodata, so adjust the data accordingly.
-
-> *Note 2:* To uninstall/update this plugin on Windows (QGIS 3.x and QGIS 4.x), due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
+> *Note:* To uninstall/update this plugin on Windows (QGIS 3.x and QGIS 4.x), due to some dlls that the plugin has, you must first deactivate, restart Qgis and finally update and activate.
 
 ## Source code
 

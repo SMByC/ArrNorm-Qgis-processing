@@ -76,7 +76,7 @@ def _clip_for_dtype(arr, gdal_dtype):
     return np.clip(arr, rng[0], rng[1])
 
 
-def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
+def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
          graphics=False, out_dtype=None, img_ref=None, img_tgt=None,
          output=None, feedback=None):
 
@@ -140,17 +140,17 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
     # accurate than 1 - cdf() in the relevant upper tail.
     chisqr = imadDataset.GetRasterBand(imadbands).ReadAsArray(0, 0, cols, rows).ravel()
     ncp = stats.chi2.sf(chisqr, imadbands - 1)
-    idx = np.where(ncp > ncpThresh)
+    idx = np.where(ncp > ncp_threshold)
     _info(time.asctime())
     _info(f'reference: {referencefn}')
     _info(f'target   : {targetfn}')
-    _info(f'no-change probability threshold: {ncpThresh}')
+    _info(f'no-change probability threshold: {ncp_threshold}')
     _info(f'no-change pixels: {len(idx[0])}')
 
     if len(idx[0]) < 2:
         _error(
             f"Error: only {len(idx[0])} no-change pixels selected "
-            f"(threshold={ncpThresh}). Lower -t to keep more pixels.")
+            f"(threshold={ncp_threshold}). Lower -t to keep more pixels.")
 
     start = time.time()
     driver = targetDataset.GetDriver()
@@ -190,7 +190,7 @@ def main(img_imad, ncpThresh=0.95, pos=None, dims=None, img_target=None,
             f'reference: {os.path.basename(referencefn)}\n'
             f'no-change pixels: {n_nochange:,} / {n_total:,} '
             f'({pct_nochange:.2f}%)   '
-            f'NCP threshold: {ncpThresh}',
+            f'NCP threshold: {ncp_threshold}',
             fontsize=10,
         )
 
@@ -325,7 +325,7 @@ if __name__ == '__main__':
     options, args = getopt.getopt(sys.argv[1:], 'hnp:d:t:')
     pos = None
     dims = None
-    ncpThresh = 0.95
+    ncp_threshold = 0.95
     fsfn = None
     graphics = True
     for option, value in options:
@@ -339,7 +339,7 @@ if __name__ == '__main__':
         elif option == '-d':
             dims = eval(value)
         elif option == '-t':
-            ncpThresh = float(value)
+            ncp_threshold = float(value)
     if (len(args) != 1) and (len(args) != 2):
         print('Incorrect number of arguments')
         print(usage)
@@ -348,4 +348,4 @@ if __name__ == '__main__':
     if len(args) == 2:
         fsfn = args[1]
 
-    main(imadfn, ncpThresh, pos, dims, fsfn, graphics=graphics)
+    main(imadfn, ncp_threshold, pos, dims, fsfn, graphics=graphics)
