@@ -263,7 +263,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.KEEP_MASK_LAYER,
-                self.tr('Keep the nodata mask as a separate file'),
+                self.tr('Keep the nodata mask as a separate file (in the same output directory)'),
                 defaultValue=False,
                 optional=True
             )

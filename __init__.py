@@ -18,22 +18,6 @@
  *                                                                         *
  ***************************************************************************/
 """
-import os
-import site
-
-
-def pre_init_plugin():
-    # check importing osgeo_utils else load extra python dependencies
-    # https://pypi.org/project/gdal-utils/#files
-    try:
-        import osgeo_utils
-    except ImportError:
-        extra_libs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "extlibs"))
-        if os.path.isdir(extra_libs_path):
-            site.addsitedir(extra_libs_path)
-
-
-
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
     """Load ArrNorm class from file ArrNorm.
@@ -41,9 +25,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    # load extra python dependencies
-    pre_init_plugin()
-
-    #
     from ArrNorm.ArrNorm_plugin import ArrNormPlugin
     return ArrNormPlugin()
