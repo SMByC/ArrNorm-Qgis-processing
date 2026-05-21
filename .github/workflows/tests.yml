@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-gdal \
+            python3-numpy \
+            python3-scipy \
+            python3-matplotlib \
+            python3-pytest
+
+      - name: Run tests
+        run: PYTHONPATH=/home/xavier/Projects/SMBYC/Qgis_Plugins/ArrNorm-Qgis-processing python3 -m pytest tests/ -v
