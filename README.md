@@ -50,7 +50,7 @@ Orthogonal regression is used because both images contain measurement noise, so 
 
 *Fig. 1 — Example of a Landsat image normalization using a multi-year average as reference. Pixel values are affected by sensor angle, sun position, atmospheric conditions, and seasonal variation; ArrNorm compensates for all of these. Use the same display style (copy/paste style in QGIS) across all layers when comparing before and after.*
 
-> See also the [ArrNorm-Qgis-processing](https://github.com/SMByC/ArrNorm) cli version.
+> See also the [ArrNorm](https://github.com/SMByC/ArrNorm) cli version.
 
 ## References
 
