@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ArrNorm"
+version = "26.5"
+description = "Apply automatic relative radiometric normalization to a target image based on a reference image using the IR-MAD algorithm"
+readme = "README.md"
+license = "GPL-2.0-or-later"
+authors = [
+    { name = "Xavier Corredor Llano, SMByC", email = "xcorredorl@ideam.gov.co" },
+]
+keywords = ["qgis", "raster", "processing", "normalization", "remote-sensing", "IR-MAD"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://github.com/SMByC/ArrNorm-Qgis-processing"
+Repository = "https://github.com/SMByC/ArrNorm-Qgis-processing"
+Tracker = "https://github.com/SMByC/ArrNorm-Qgis-processing/issues"
+Changelog = "https://github.com/SMByC/ArrNorm-Qgis-processing/commits"
+
+[tool.setuptools.packages.find]
+include = ["ArrNorm*"]
+
+[tool.qgis-plugin]
+qgis-minimum-version = "3.16"
+qgis-maximum-version = "4.99"
+category = "Analysis"
+icon = "icons/arrnorm.png"
+experimental = false
+deprecated = false
+server = false
+tags = ["raster", "processing", "normalization"]
