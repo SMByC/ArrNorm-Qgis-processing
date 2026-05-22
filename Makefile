@@ -3,7 +3,7 @@
 #
 #  Automatic relative radiometric normalization
 #							 -------------------
-#		copyright			: (C) 2019 by Xavier Corredor Llano, SMByC
+#		copyright			: (C) 2026 by Xavier Corredor Llano, SMByC
 #		email				: xcorredorl@ideam.gov.co
 # ***************************************************************************/
 #
@@ -48,11 +48,11 @@ PY_FILES = \
 	ArrNorm_plugin.py \
 	ArrNorm_provider.py
 
-UI_FILES = 
+UI_FILES =
 
 EXTRAS = metadata.txt LICENSE
 
-EXTRA_DIRS = core icons extlibs
+EXTRA_DIRS = core icons gui
 
 COMPILED_RESOURCE_FILES = resources.py
 
@@ -119,12 +119,10 @@ test: compile transcompile
 	@echo "Regression Test Suite"
 	@echo "----------------------"
 
-	@# Preceding dash means that make will continue in case of errors
-	@-export PYTHONPATH=`pwd`:$(PYTHONPATH); \
+	@-export PYTHONPATH=`pwd`/..:$(PYTHONPATH); \
 		export QGIS_DEBUG=0; \
 		export QGIS_LOG_FILE=/dev/null; \
-		python3 -m pytest -v \
-		3>&1 1>&2 2>&3 3>&- || true
+		python3 -m pytest tests/ -v
 	@echo "----------------------"
 	@echo "If you get a 'no module named qgis.core error, try sourcing"
 	@echo "the helper script we have provided first then run make test."
@@ -169,15 +167,22 @@ derase:
 	@echo "-------------------------"
 	rm -Rf $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 
-zip: deploy dclean
+zip: compile
 	@echo
 	@echo "---------------------------"
 	@echo "Creating plugin zip bundle."
 	@echo "---------------------------"
-	# The zip target deploys the plugin and creates a zip file with the deployed
-	# content. You can then upload the zip file on http://plugins.qgis.org
 	rm -f $(PLUGINNAME).zip
-	cd $(HOME)/$(QGISDIR)/python/plugins; zip -9r $(CURDIR)/$(PLUGINNAME).zip $(PLUGINNAME)
+	mkdir -p .pkg_tmp/$(PLUGINNAME)
+	cp -f $(PY_FILES) $(COMPILED_RESOURCE_FILES) $(EXTRAS) .pkg_tmp/$(PLUGINNAME)/
+	@for d in $(EXTRA_DIRS); do \
+		if [ -d "$$d" ]; then cp -rf $$d .pkg_tmp/$(PLUGINNAME)/; fi; \
+	done
+	find .pkg_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" \) -prune -exec rm -rf {} \;
+	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh" -o -name "*.db" -o -name "AGENTS.md" \) -delete
+	cd .pkg_tmp && zip -9r ../$(PLUGINNAME).zip $(PLUGINNAME)
+	rm -rf .pkg_tmp
+	@echo "Created package: $(PLUGINNAME).zip"
 
 package: compile
 	# Create a zip package of the plugin named $(PLUGINNAME).zip.
