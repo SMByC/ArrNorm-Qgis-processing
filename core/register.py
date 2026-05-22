@@ -15,6 +15,7 @@
 #  License: GPLv2+
 # ******************************************************************************
 
+import ast
 import getopt
 import os
 import sys
@@ -186,7 +187,7 @@ if __name__ == '__main__':
         elif option == '-b':
             warpband = int(value)
         elif option == '-d':
-            dims = eval(value)
+            dims = ast.literal_eval(value)
     if len(args) != 2:
         print('Incorrect number of arguments')
         print(usage)
