@@ -83,6 +83,11 @@ def main(img_ref, img_target, warpband=2, chunksize=None, feedback=None):
     if inDataset1 is None or inDataset2 is None:
         _error('Error: input image(s) could not be opened.')
 
+    max_band = min(inDataset1.RasterCount, inDataset2.RasterCount)
+    if warpband > max_band:
+        _info(f'warpband {warpband} exceeds available bands ({max_band}); falling back to band 1')
+        warpband = 1
+
     ref_band = inDataset1.GetRasterBand(warpband)
     tgt_band = inDataset2.GetRasterBand(warpband)
 
