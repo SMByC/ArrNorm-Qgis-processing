@@ -113,7 +113,7 @@ compile: $(COMPILED_RESOURCE_FILES)
 %.qm : %.ts
 	$(LRELEASE) $<
 
-test: compile transcompile
+test:
 	@echo
 	@echo "----------------------"
 	@echo "Regression Test Suite"
