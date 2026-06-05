@@ -22,7 +22,10 @@ import os
 import shutil
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly
-from qgis.core import QgsProcessingException
+try:
+    from qgis.core import QgsProcessingException
+except ImportError:
+    QgsProcessingException = Exception
 
 from ArrNorm.core import iMad, radcal
 from ArrNorm.core import raster_ops
