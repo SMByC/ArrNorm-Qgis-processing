@@ -1,5 +1,5 @@
 <RCC>
     <qresource prefix="/plugins/ArrNorm" >
-        <file>icons/arrnorm.svg</file>
+        <file>img/arrnorm.svg</file>
     </qresource>
 </RCC>
