@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="img/arrnorm.svg" alt="ArrNorm icon" width="96" height="96">
+  <img src="icons/arrnorm.svg" alt="ArrNorm icon" width="96" height="96">
 </p>
 <h1 align="center">ArrNorm</h1>
 
@@ -49,7 +49,7 @@ Y_normalized = a + b · Y_target
 
 Orthogonal regression is used because both images contain measurement noise, so minimizing residuals in both directions gives a more accurate calibration line than ordinary least squares. The coefficients are applied to the full target image to produce the normalized output.
 
-![](img/example.jpg)
+![](example.jpg)
 
 *Fig. 1 — Example of a Landsat image normalization using a multi-year average as reference. Pixel values are affected by sensor angle, sun position, atmospheric conditions, and seasonal variation; ArrNorm compensates for all of these. Use the same display style (copy/paste style in QGIS) across all layers when comparing before and after.*
 

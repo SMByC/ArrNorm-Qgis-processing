@@ -36,10 +36,10 @@ Changelog = "https://github.com/SMByC/ArrNorm-Qgis-processing/commits"
 include = ["ArrNorm*"]
 
 [tool.qgis-plugin]
-qgis-minimum-version = "3.16"
+qgis-minimum-version = "3.36"
 qgis-maximum-version = "4.99"
 category = "Analysis"
-icon = "img/arrnorm.png"
+icon = "icons/arrnorm.png"
 experimental = false
 deprecated = false
 server = false

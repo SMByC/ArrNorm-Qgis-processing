@@ -23,7 +23,6 @@ import os
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsProcessingProvider
 from ArrNorm.ArrNorm_algorithm import ArrNormAlgorithm
-from . import resources
 
 # plugin path
 plugin_folder = os.path.dirname(__file__)
@@ -35,14 +34,14 @@ class ArrNormProvider(QgsProcessingProvider):
         """
         Default constructor.
         """
-        QgsProcessingProvider.__init__(self)
+        super().__init__()
 
     def unload(self):
         """
         Unloads the provider. Any tear-down steps required by the provider
         should be implemented here.
         """
-        QgsProcessingProvider.unload(self)
+        super().unload()
 
     def loadAlgorithms(self):
         """

@@ -22,7 +22,7 @@ import os
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import (QgsProcessingAlgorithm, QgsProcessingParameterDefinition,
+from qgis.core import (Qgis, QgsProcessingAlgorithm,
                        QgsProcessingParameterRasterDestination, QgsProcessingParameterNumber,
                        QgsProcessingParameterRasterLayer, QgsProcessingParameterBoolean)
 
@@ -200,7 +200,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         mask_ref_nodata = QgsProcessingParameterNumber(
             self.MASK_REF_NODATA,
             self.tr('Reference nodata value'),
-            type=QgsProcessingParameterNumber.Type.Double,
+                type=Qgis.ProcessingNumberParameterType.Double,
             optional=True,
             defaultValue=None
         )
@@ -238,7 +238,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         nodata_mask_value = QgsProcessingParameterNumber(
             self.NODATA_MASK_VALUE,
             self.tr('Target and output nodata value'),
-            type=QgsProcessingParameterNumber.Type.Double,
+                type=Qgis.ProcessingNumberParameterType.Double,
             optional=True,
             defaultValue=None
         )
@@ -277,33 +277,33 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.MAX_ITERS,
                 self.tr('Maximum number of iterations'),
-                type=QgsProcessingParameterNumber.Type.Integer,
+                type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=25,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
         self.addParameter(parameter)
 
         parameter = \
             QgsProcessingParameterNumber(
                 self.CONV_THRESHOLD,
                 self.tr('IR-MAD convergence threshold'),
-                type=QgsProcessingParameterNumber.Type.Double,
+                type=Qgis.ProcessingNumberParameterType.Double,
                 defaultValue=0.99,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
         self.addParameter(parameter)
 
         parameter = \
             QgsProcessingParameterNumber(
                 self.NCP_THRESHOLD,
                 self.tr('No-change pixel probability threshold'),
-                type=QgsProcessingParameterNumber.Type.Double,
+                type=Qgis.ProcessingNumberParameterType.Double,
                 defaultValue=0.95,
                 optional=True
             )
-        parameter.setFlags(parameter.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
         self.addParameter(parameter)
 
         # =====================================================================
