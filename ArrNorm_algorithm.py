@@ -145,7 +145,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         return None
 
     def icon(self):
-        return QIcon(os.path.join(os.path.dirname(__file__), 'icons', 'arrnorm.svg'))
+        return QIcon(':/plugins/ArrNorm/arrnorm.svg')
 
     def initAlgorithm(self, config=None):
         """

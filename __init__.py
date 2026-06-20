@@ -25,5 +25,8 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
+    # Register icons under :/plugins/ArrNorm/ before the plugin class is imported
+    from . import resources  # noqa: F401
     from ArrNorm.ArrNorm_plugin import ArrNormPlugin
+
     return ArrNormPlugin()

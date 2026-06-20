@@ -54,7 +54,9 @@ EXTRAS = metadata.txt LICENSE
 
 EXTRA_DIRS = core icons gui
 
-PEP8EXCLUDE=pydev,conf.py,third_party,ui
+COMPILED_RESOURCE_FILES = resources.py
+
+PEP8EXCLUDE=pydev,resources.py,conf.py,third_party,ui
 
 # Install paths. Defaults target QGIS 4; override for QGIS 3 builds, e.g.:
 #   make deploy QGISDIR=.local/share/QGIS/QGIS3/profiles/default
@@ -64,13 +66,33 @@ QGISDIR?=.local/share/QGIS/QGIS4/profiles/default
 # Normally you would not need to edit below here
 #################################################
 
+RESOURCE_SRC=$(shell grep '^ *<file' resources.qrc | sed 's@</file>@@g;s/.*>//g' | tr '\n' ' ')
+
 HELP = README.md
 
 PLUGIN_UPLOAD = python3 plugin_upload.py -u xaviercll
 
 default: compile
 
-compile:
+compile: $(COMPILED_RESOURCE_FILES)
+
+# Supports Qt5 (pyrcc5 / QGIS 3.x) and Qt6 (pyside6-rcc / QGIS 4.x).
+# After compilation, the PyQt5 import is rewritten to the qgis.PyQt shim so
+# the same resources.py file loads correctly under both QGIS versions.
+%.py : %.qrc $(RESOURCE_SRC)
+	@if command -v pyside6-rcc > /dev/null 2>&1; then \
+		echo "Using pyside6-rcc (Qt6/QGIS 4.x)"; \
+		pyside6-rcc -o $*.py $<; \
+	elif command -v pyrcc5 > /dev/null 2>&1; then \
+		echo "Using pyrcc5 (Qt5/QGIS 3.x)"; \
+		pyrcc5 -o $*.py $<; \
+	else \
+		echo "Error: Neither pyside6-rcc nor pyrcc5 found."; \
+		echo "Install pyside6 (Qt6/QGIS 4.x) or pyrcc5 (Qt5/QGIS 3.x)."; \
+		exit 1; \
+	fi
+	sed -i 's/^from PyQt5 import QtCore/from qgis.PyQt import QtCore/' $*.py
+	sed -i 's/^from PySide6 import QtCore/from qgis.PyQt import QtCore/' $*.py
 
 %.qm : %.ts
 	$(LRELEASE) $<
@@ -100,7 +122,7 @@ deploy: compile doc transcompile
 	# the Python plugin directory is located at:
 	# $HOME/$(QGISDIR)/python/plugins
 	mkdir -p $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(PY_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
+	cp -vf $(PY_FILES) $(COMPILED_RESOURCE_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	#cp -vf $(UI_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(EXTRAS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	#cp -vfr i18n $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
@@ -135,7 +157,7 @@ zip: compile
 	@echo "---------------------------"
 	rm -f $(PLUGINNAME).zip
 	mkdir -p .pkg_tmp/$(PLUGINNAME)
-	cp -f $(PY_FILES) $(EXTRAS) .pkg_tmp/$(PLUGINNAME)/
+	cp -f $(PY_FILES) $(COMPILED_RESOURCE_FILES) $(EXTRAS) .pkg_tmp/$(PLUGINNAME)/
 	@for d in $(EXTRA_DIRS); do \
 		if [ -d "$$d" ]; then cp -rf $$d .pkg_tmp/$(PLUGINNAME)/; fi; \
 	done
@@ -194,6 +216,7 @@ clean:
 	@echo "------------------------------------"
 	@echo "Removing generated files"
 	@echo "------------------------------------"
+	rm -f $(COMPILED_RESOURCE_FILES)
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
