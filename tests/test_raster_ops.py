@@ -1,11 +1,7 @@
-import os
-import tempfile
-
 import numpy as np
 import pytest
-from osgeo import gdal
-
 from ArrNorm.core import raster_ops
+from osgeo import gdal
 
 
 def _create_test_raster(path, data, nodata=None, dtype=gdal.GDT_Float32):
@@ -151,6 +147,7 @@ class TestMakeMask:
 
         ct = ds.GetRasterBand(1).GetRasterColorTable()
         assert ct is not None
+        assert ds.GetRasterBand(1).GetColorInterpretation() == gdal.GCI_PaletteIndex
         assert ct.GetColorEntry(0) == (0, 0, 0, 255)
         assert ct.GetColorEntry(1) == (0, 255, 0, 255)
         ds = None

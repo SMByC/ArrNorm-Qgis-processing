@@ -127,30 +127,35 @@ def make_mask(input_path, output_path, nodata_value,
     if src_ds is None:
         raise RuntimeError(f"Cannot open raster: {input_path}")
 
-    driver = src_ds.GetDriver()
-    cols, rows = src_ds.RasterXSize, src_ds.RasterYSize
-    src_band = src_ds.GetRasterBand(1)
-    src_dtype = src_band.DataType
-    is_float = _is_float_dtype(src_dtype)
+    src_band = None
+    dst_ds = None
+    out_band = None
+    try:
+        driver = src_ds.GetDriver()
+        cols, rows = src_ds.RasterXSize, src_ds.RasterYSize
+        src_band = src_ds.GetRasterBand(1)
+        src_dtype = src_band.DataType
+        is_float = _is_float_dtype(src_dtype)
 
-    dst_ds = driver.Create(output_path, cols, rows, 1, gdal.GDT_Byte,
-                           ["COMPRESS=PACKBITS", "NBITS=1"])
-    _copy_spatial_metadata(src_ds, dst_ds)
+        dst_ds = driver.Create(output_path, cols, rows, 1, gdal.GDT_Byte,
+                               ["COMPRESS=PACKBITS", "NBITS=1"])
+        _copy_spatial_metadata(src_ds, dst_ds)
+        out_band = dst_ds.GetRasterBand(1)
 
-    out_band = dst_ds.GetRasterBand(1)
+        colors = gdal.ColorTable()
+        colors.SetColorEntry(0, (0, 0, 0, 255))
+        colors.SetColorEntry(1, (0, 255, 0, 255))
+        out_band.SetRasterColorTable(colors)
 
-    for y_off, n_rows in _iter_row_blocks(rows, block_rows):
-        data = src_band.ReadAsArray(0, y_off, cols, n_rows)
-        mask = _safe_neq(data, nodata_value, is_float).astype(np.uint8)
-        out_band.WriteArray(mask, 0, y_off)
+        for y_off, n_rows in _iter_row_blocks(rows, block_rows):
+            data = src_band.ReadAsArray(0, y_off, cols, n_rows)
+            mask = _safe_neq(data, nodata_value, is_float).astype(np.uint8)
+            out_band.WriteArray(mask, 0, y_off)
 
-    colors = gdal.ColorTable()
-    colors.SetColorEntry(0, (0, 0, 0, 255))
-    colors.SetColorEntry(1, (0, 255, 0, 255))
-    out_band.SetRasterColorTable(colors)
-    out_band.FlushCache()
-
-    src_ds = dst_ds = None
+        out_band.FlushCache()
+    finally:
+        src_band = out_band = None
+        src_ds = dst_ds = None
 
 
 def apply_mask(image_path, mask_path, output_path, nodata_value,
