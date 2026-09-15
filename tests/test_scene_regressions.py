@@ -1,8 +1,8 @@
 """
-Integration tests for the ArrNorm QGIS plugin normalization pipeline.
+Scene-based integration and pixel-exact regression tests for normalization.
 
 Each scenario runs the full Normalization pipeline (clipper → iMad → radcal,
-optionally with no_negative_value, make_mask, apply_mask) inside a fresh
+optionally with negative-to-nodata conversion and output masking) inside a fresh
 temporary directory and checks:
 
   1. Output file exists with correct spatial properties (CRS, geotransform,
@@ -14,14 +14,14 @@ Fast-path tests additionally verify that the clipper() step is skipped when
 the reference is already aligned to the target grid.
 """
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
+from ArrNorm.core.arrnorm import Normalization
+from ArrNorm.tests.helpers import Feedback
 from osgeo import gdal
 from osgeo.gdalconst import GA_ReadOnly
-from pathlib import Path
-
-from ArrNorm.core.arrnorm import Normalization
 
 DATA_DIR = Path(__file__).parent / "data"
 EXPECTED_DIR = DATA_DIR / "expected"
@@ -29,27 +29,6 @@ EXPECTED_DIR = DATA_DIR / "expected"
 TARGET_COLS = 536
 TARGET_ROWS = 349
 TARGET_BANDS = 4
-
-
-class MockFeedback:
-    """Minimal stand-in for QgsProcessingFeedback (no QGIS required)."""
-
-    def __init__(self):
-        self._progress = 0
-        self._canceled = False
-        self.messages = []
-
-    def pushInfo(self, msg):
-        self.messages.append(msg)
-
-    def reportError(self, msg, fatalError=False):
-        self.messages.append(f"ERROR: {msg}")
-
-    def setProgress(self, value):
-        self._progress = value
-
-    def isCanceled(self):
-        return self._canceled
 
 
 def _read_bands(path):
@@ -77,7 +56,7 @@ def _raster_info(path):
 
 
 def _run(workdir, ref_name, target_name="target.tif", **kw):
-    feedback = MockFeedback()
+    feedback = Feedback()
     norm = Normalization(
         img_ref=str(workdir / ref_name),
         img_target=str(workdir / target_name),

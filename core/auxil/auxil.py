@@ -3,10 +3,11 @@
 #  Name:     auxil.py
 #  Purpose:  Math primitives used by the IR-MAD / RadCal / Register pipeline.
 #
-#  Only four symbols are exported:
+#  Primitives used by normalization and registration:
 #     Cpm           -- weighted streaming mean / covariance accumulator
 #     geneiv        -- symmetric generalized eigenproblem  A x = lambda B x
 #     orthoregress  -- orthogonal (total-least-squares) regression
+#     OrthogonalFit -- bounded-memory regression moments
 #     similarity    -- log-polar Fourier image-image similarity transform
 #
 #  Original auxiliaries: M. Canty 2012 (DWT, ATWT, PCA, MNF, kernels, PNG
@@ -75,6 +76,8 @@ class Cpm(object):
         self.sw = sw_new
 
     def covariance(self):
+        if not np.isfinite(self.sw) or self.sw <= 1:
+            raise ValueError('Insufficient effective pixel weight for covariance.')
         c = self.cov / (self.sw - 1.0)
         return 0.5 * (c + c.T)  # symmetrize tiny asymmetric drift
 
@@ -114,6 +117,8 @@ def orthoregress(x, y):
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
+    if x.size < 2 or x.shape != y.shape or not (np.isfinite(x).all() and np.isfinite(y).all()):
+        raise ValueError('Regression requires at least two finite paired samples.')
     xm = x.mean()
     ym = y.mean()
     dx = x - xm
@@ -128,6 +133,50 @@ def orthoregress(x, y):
         return [0.0, ym, R]
     b = (syy - sxx + math.sqrt((syy - sxx) ** 2 + 4.0 * sxy * sxy)) / (2.0 * sxy)
     return [b, ym - b * xm, R]
+
+
+class OrthogonalFit:
+    """Streaming centered moments for an exact TLS fit, independent of block size.
+
+Chan's merge formula avoids subtracting large uncentered sums. Memory is
+constant in the number of pixels; only the current input block is retained.
+"""
+    def __init__(self):
+        self.count = 0
+        self.mean = np.zeros(2)
+        self.cross = np.zeros((2, 2))
+
+    def update(self, x, y):
+        if len(x) == 0:
+            return
+        values = np.column_stack((x, y)).astype(np.float64)
+        if not np.isfinite(values).all():
+            raise ValueError('Regression samples must be finite.')
+        count = len(values)
+        mean = values.mean(axis=0)
+        centered = values - mean
+        delta = mean - self.mean
+        total = self.count + count
+        self.cross += centered.T @ centered + np.outer(delta, delta) * (self.count * count / total)
+        self.mean += delta * (count / total)
+        self.count = total
+
+    def coefficients(self):
+        if self.count < 2:
+            raise ValueError('Regression requires at least two finite paired samples.')
+        sxx, sxy, syy = self.cross[0, 0], self.cross[0, 1], self.cross[1, 1]
+        if sxx <= 0 or not np.isfinite(self.cross).all():
+            raise ValueError('No target variance remains in the regression samples.')
+        if sxy == 0:
+            if syy > sxx:
+                raise ValueError('A vertical orthogonal regression cannot calibrate the target.')
+            return 0.0, float(self.mean[1]), 0.0
+        difference = syy - sxx
+        length = math.hypot(difference, 2 * sxy)
+        slope = ((difference + length) / (2 * sxy) if difference >= 0
+                 else 2 * sxy / (length - difference))
+        return (slope, self.mean[1] - slope * self.mean[0],
+                float(np.clip(sxy / math.sqrt(sxx * syy), -1, 1)))
 
 
 # -----------------------------

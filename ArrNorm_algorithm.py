@@ -22,7 +22,7 @@ import os
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import (Qgis, QgsProcessingAlgorithm,
+from qgis.core import (Qgis, QgsProcessingAlgorithm, QgsProcessingException,
                        QgsProcessingParameterRasterDestination, QgsProcessingParameterNumber,
                        QgsProcessingParameterRasterLayer, QgsProcessingParameterBoolean)
 
@@ -30,10 +30,7 @@ from ArrNorm.core.arrnorm import Normalization
 
 
 class ArrNormAlgorithm(QgsProcessingAlgorithm):
-    """
-    This algorithm compute a specific statistic using the time
-    series of all pixels across (the time) all raster in the specific band
-    """
+    """Normalize a target raster to a reference using IR-MAD and per-band regression."""
 
     # Constants used to refer to parameters and outputs. They will be
     # used when calling the algorithm from another algorithm, or when
@@ -83,7 +80,8 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         normalized output.</p>
 
         <p>If the reference and target images are not on the same pixel grid, the reference is \
-        automatically reprojected and clipped to match the target before processing.</p>
+        reprojected and clipped to match the target before processing. This requires a \
+        georeferenced, north-up target. Already aligned rasters are reused directly.</p>
 
         <p><b>&#9888; Nodata masking is strongly recommended when nodata pixels are present.</b> \
         Nodata values are arbitrary fill numbers that do not represent actual surface reflectance. \
@@ -111,13 +109,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         return ArrNormAlgorithm()
 
     def name(self):
-        """
-        Returns the algorithm name, used for identifying the algorithm. This
-        string should be fixed for the algorithm, and must not be localised.
-        The name should be unique within each provider. Names should contain
-        lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
-        """
+        """Retain the published algorithm ID for existing models, scripts and history."""
         return 'Automatic relative radiometric normalization'
 
     def displayName(self):
@@ -279,6 +271,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Maximum number of iterations'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=25,
+                minValue=1,
                 optional=True
             )
         parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
@@ -290,6 +283,8 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 self.tr('IR-MAD convergence threshold'),
                 type=Qgis.ProcessingNumberParameterType.Double,
                 defaultValue=0.99,
+                minValue=0,
+                maxValue=1,
                 optional=True
             )
         parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
@@ -301,6 +296,8 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 self.tr('No-change pixel probability threshold'),
                 type=Qgis.ProcessingNumberParameterType.Double,
                 defaultValue=0.95,
+                minValue=0,
+                maxValue=1,
                 optional=True
             )
         parameter.setFlags(parameter.flags() | Qgis.ProcessingParameterFlag.Advanced)
@@ -323,13 +320,18 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         """
 
         def get_inputfilepath(layer):
+            if layer is None:
+                raise QgsProcessingException(
+                    self.tr('The reference/target raster layer is missing or invalid.'))
             source = layer.source()
             # Strip QGIS layername suffix if present (e.g. GeoPackage layers)
             path = source.split("|layername")[0]
             # Handle database/WMS/in-memory sources that aren't file paths
             if not os.path.exists(path):
-                feedback.reportError(f"Reference/target source is not a valid file path: {path}")
-                return None
+                raise QgsProcessingException(
+                    self.tr('Reference/target source is not a valid file path: {path}. '
+                            'ArrNorm works on file-based rasters only; database, WMS '
+                            'and in-memory sources are not supported.').format(path=path))
             return os.path.realpath(path)
 
         output_file = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
@@ -337,22 +339,25 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         # Optional nodata values: None means auto-detect from the respective image.
         mask_ref_nodata_raw = parameters.get(self.MASK_REF_NODATA)
         if mask_ref_nodata_raw is not None and str(mask_ref_nodata_raw).strip():
-            mask_ref_nodata = float(mask_ref_nodata_raw)
+            mask_ref_nodata = self.parameterAsDouble(parameters, self.MASK_REF_NODATA, context)
         else:
             mask_ref_nodata = None
 
         nodata_mask_value_raw = parameters.get(self.NODATA_MASK_VALUE)
         if nodata_mask_value_raw is not None and str(nodata_mask_value_raw).strip():
-            nodata_mask_value = float(nodata_mask_value_raw)
+            nodata_mask_value = self.parameterAsDouble(parameters, self.NODATA_MASK_VALUE, context)
         else:
             nodata_mask_value = None
 
         arrnorm = Normalization(
             img_ref=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_REF, context)),
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
-            max_iters=self.parameterAsInt(parameters, self.MAX_ITERS, context) or 25,
-            conv_threshold=self.parameterAsDouble(parameters, self.CONV_THRESHOLD, context) or 0.99,
-            ncp_threshold=self.parameterAsDouble(parameters, self.NCP_THRESHOLD, context) or 0.95,
+            max_iters=(25 if parameters.get(self.MAX_ITERS) in (None, '') else
+                       self.parameterAsInt(parameters, self.MAX_ITERS, context)),
+            conv_threshold=(0.99 if parameters.get(self.CONV_THRESHOLD) in (None, '') else
+                            self.parameterAsDouble(parameters, self.CONV_THRESHOLD, context)),
+            ncp_threshold=(0.95 if parameters.get(self.NCP_THRESHOLD) in (None, '') else
+                           self.parameterAsDouble(parameters, self.NCP_THRESHOLD, context)),
             neg_to_nodata=self.parameterAsBoolean(parameters, self.NEG_TO_NODATA, context),
             mask_ref=self.parameterAsBoolean(parameters, self.MASK_REF, context),
             mask_ref_nodata=mask_ref_nodata,
@@ -363,5 +368,10 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             feedback=feedback)
 
         arrnorm.run()
+
+        if feedback.isCanceled():
+            # The run was cancelled by the user: report no results instead of
+            # an output path that was never created.
+            return {}
 
         return {self.OUTPUT: output_file}

@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">ArrNorm</h1>
 
-ArrNorm is a command-line tool for relative radiometric normalization of multispectral remote sensing imagery. Given a reference image and one or more target images acquired over the same area at different dates, it produces normalized outputs whose reflectance values are statistically consistent with the reference — compensating for differences caused by sensor angle, sun position, atmospheric conditions, and seasonal variation.
+ArrNorm is a QGIS Processing plugin for relative radiometric normalization of multispectral remote sensing imagery. It calibrates a target image to a reference image using invariant pixels identified by IR-MAD.
 
 Normalization relies on the **IR-MAD** algorithm (Iteratively Reweighted Multivariate Alteration Detection) to automatically identify *no-change* pixels shared by both images and use them to calibrate a per-band linear transform. [[1]](#references)
 
@@ -14,6 +14,8 @@ The pipeline has three main stages:
 ### 1. Alignment
 
 Before any statistics are computed the reference image is reprojected and resampled onto the target's exact pixel grid (same CRS, same spatial extent, same number of pixels) using `gdal.Warp` with bilinear resampling. This guarantees pixel-for-pixel spatial coincidence, which is a hard requirement for the IR-MAD covariance computations. If the two images already share an identical grid the step is skipped.
+
+**Nodata masking is strongly recommended for both reference and target images when nodata is present.** Unmasked fill values can bias the calibration and introduce errors across the entire normalized image.
 
 ### 2. IR-MAD — invariant pixel detection
 
@@ -70,4 +72,4 @@ ArrNorm was designed and implemented by the Forest and Carbon Monitoring System 
 
 ## License
 
-ArrNorm is free/libre software, licensed under the GNU General Public License v3 (GPLv3).
+ArrNorm is free/libre software, licensed under the GNU General Public License version 2 (GPL-2.0-or-later).

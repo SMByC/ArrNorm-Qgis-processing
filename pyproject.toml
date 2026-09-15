@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ArrNorm"
-version = "26.5"
+version = "26.6"
 description = "Apply automatic relative radiometric normalization to a target image based on a reference image using the IR-MAD algorithm"
 readme = "README.md"
 license = "GPL-2.0-or-later"
@@ -44,3 +44,6 @@ experimental = false
 deprecated = false
 server = false
 tags = ["raster", "processing", "normalization"]
+
+[tool.pyright]
+extraPaths = [".."]  # include project folder

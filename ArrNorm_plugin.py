@@ -19,42 +19,37 @@
  ***************************************************************************/
 """
 
-import os
-import platform
-import sys
-import inspect
-
 from qgis.core import QgsApplication
+
 from ArrNorm.ArrNorm_provider import ArrNormProvider
-
-cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]
-
-if cmd_folder not in sys.path:
-    sys.path.insert(0, cmd_folder)
 
 
 class ArrNormPlugin:
 
     def __init__(self):
-        self.provider = ArrNormProvider()
+        self.provider = None
 
     def initProcessing(self):
         """Init Processing provider for QGIS >= 3.8."""
-        QgsApplication.processingRegistry().addProvider(self.provider)
+        registry = QgsApplication.processingRegistry()
+        existing = registry.providerById('arrnorm')
+        if existing is not None and existing is self.provider:
+            return
+        if existing is not None:
+            raise RuntimeError('An ArrNorm processing provider is already registered.')
+        # A missing registration may mean our previous C++ provider was
+        # deleted by the registry. Never reuse that Python wrapper.
+        self.provider = None
+        provider = ArrNormProvider()
+        if not registry.addProvider(provider):
+            raise RuntimeError('Could not register the ArrNorm processing provider.')
+        self.provider = provider
 
     def initGui(self):
         self.initProcessing()
 
     def unload(self):
-        # unload dll
-        if platform.system() == 'Windows':
-            from ArrNorm.core.auxil.auxil import lib
-            import ctypes
-            try:
-                ctypes.windll.kernel32.FreeLibrary.argtypes = [ctypes.wintypes.HMODULE]
-                ctypes.windll.kernel32.FreeLibrary(lib._handle)
-                del lib
-            except:
-                pass
-
-        QgsApplication.processingRegistry().removeProvider(self.provider)
+        provider, self.provider = self.provider, None
+        registry = QgsApplication.processingRegistry()
+        if provider is not None and registry.providerById('arrnorm') is provider:
+            registry.removeProvider(provider)

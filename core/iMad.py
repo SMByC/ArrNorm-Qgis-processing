@@ -11,20 +11,28 @@
 # ******************************************************************************
 
 import os
+import sys
 import time
+from contextlib import ExitStack
 from operator import itemgetter
 
 import numpy as np
 from osgeo import gdal
-from osgeo.gdalconst import GA_ReadOnly, GDT_Float32
+from osgeo.gdalconst import GDT_Float32
 from scipy import stats
 
+from ArrNorm.core import raster_io as rio
 from ArrNorm.core.auxil import auxil
 
 try:
     from qgis.core import QgsProcessingException
 except ImportError:
     QgsProcessingException = Exception
+
+
+class _FatalInputError(QgsProcessingException):
+    """Deliberate fatal error for degenerate input; never swallowed by the
+    per-iteration fallback handler."""
 
 # Block height (in rows) used when streaming both images band-by-band into
 # the running covariance accumulator. Reading 256 rows at a time amortizes
@@ -33,10 +41,15 @@ except ImportError:
 DEFAULT_BLOCK_ROWS = 256
 
 
-def _iter_row_blocks(rows, block_rows):
-    """Yield (y_offset, n_rows) chunks covering [0, rows)."""
-    for y in range(0, rows, block_rows):
-        yield y, min(block_rows, rows - y)
+_iter_row_blocks = rio.row_blocks
+
+
+def _has_nonzero(band, x, y, cols, rows, block_rows, feedback):
+    for offset, count in rio.row_blocks(rows, block_rows):
+        rio.check_cancel(feedback)
+        if rio.read_band(band, x, y + offset, cols, count).any():
+            return True
+    return False
 
 
 def _read_block(raster_bands, x0, y0, cols, n_rows):
@@ -44,16 +57,34 @@ def _read_block(raster_bands, x0, y0, cols, n_rows):
     bands = len(raster_bands)
     tile = np.empty((n_rows * cols, bands), dtype=np.float64)
     for k, rb in enumerate(raster_bands):
-        arr = rb.ReadAsArray(x0, y0, cols, n_rows)
-        tile[:, k] = np.nan_to_num(arr, copy=False).ravel()
+        arr = rio.read_band(rb, x0, y0, cols, n_rows)
+        tile[:, k] = arr.ravel()
     return tile
 
 
+def _valid_rows(tile, nodata):
+    """True only where all bands are finite and differ from any configured sentinels."""
+    return rio.valid_rows(tile, nodata)
+
+
 def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, dims=None,
-          graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS,
-          feedback=None):
+         graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS, feedback=None, *,
+         output_dir=None, nodata_ref=None, nodata_tgt=None, output=None):
+    rio.validate_options(max_iters, conv_threshold, 0.95)
+    try:
+        with ExitStack() as stack:
+            return _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
+                         graphics, ref_text, block_rows, output_dir, nodata_ref,
+                         nodata_tgt, feedback, output, stack)
+    except rio.Cancelled:
+        return None
+
+
+def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
+          graphics, ref_text, block_rows, output_dir, nodata_ref, nodata_tgt,
+          feedback, output, stack):
     gdal.AllRegister()
-    start = time.time()  # was previously undefined at print-elapsed time (bug)
+    start = time.time()
 
     # -- Logging helpers: use QGIS feedback when available, print otherwise --
     def _info(msg):
@@ -63,24 +94,24 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
             print(msg)
 
     def _error(msg):
-        if feedback is not None:
-            feedback.reportError(msg, fatalError=True)
-        raise QgsProcessingException(msg)
+        if feedback is None:
+            print(msg, file=sys.stderr)
+        raise _FatalInputError(msg)
 
     def _canceled():
         return feedback is not None and feedback.isCanceled()
 
     path = os.path.dirname(os.path.abspath(img_ref))
     basename1 = os.path.basename(img_ref)
-    root1, ext1 = os.path.splitext(basename1)
+    root1 = os.path.splitext(basename1)[0]
     basename2 = os.path.basename(img_target)
     root2, _ext2 = os.path.splitext(basename2)
-    outfn = os.path.join(path, f'MAD({root1}&{basename2}){ext1}')
+    directory = output_dir if output_dir is not None else path
+    outfn = output or os.path.join(directory, f'MAD({root1}&{basename2}).tif')
 
-    inDataset1 = gdal.Open(img_ref, GA_ReadOnly)
-    inDataset2 = gdal.Open(img_target, GA_ReadOnly)
-    if inDataset1 is None or inDataset2 is None:
-        _error("Error: input image(s) could not be opened.")
+    rio.check_cancel(feedback)
+    inDataset1 = stack.enter_context(rio.open_raster(img_ref))
+    inDataset2 = stack.enter_context(rio.open_raster(img_target))
 
     cols = inDataset1.RasterXSize
     rows = inDataset1.RasterYSize
@@ -98,6 +129,8 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
         band_pos = list(range(1, bands + 1))
     else:
         bands = len(band_pos)
+    if not bands or any(b < 1 or b > inDataset1.RasterCount for b in band_pos):
+        _error('Invalid band selection.')
 
     if dims is None:
         x0 = y0 = 0
@@ -111,9 +144,12 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
     else:
         x2, y2 = x0, y0
 
-    # Dimension guard: after clipper() in bin/arrnorm, both images MUST share
-    # the same pixel grid. Pixel-for-pixel alignment is required for IR-MAD.
-    if cols != cols2 or rows != rows2:
+    # The pipeline aligns the reference before calling IR-MAD. These checks
+    # also validate windows supplied by direct callers.
+    if (cols < 1 or rows < 1 or x0 < 0 or y0 < 0 or x2 < 0 or y2 < 0
+            or x0 + cols > inDataset1.RasterXSize or y0 + rows > inDataset1.RasterYSize
+            or x2 + cols > cols2 or y2 + rows > rows2
+            or (dims is None and (cols != cols2 or rows != rows2))):
         _error(
             f"\n ERROR: Reference clip ({cols}x{rows}) and target "
             f"({cols2}x{rows2}) have different pixel dimensions.\n"
@@ -124,15 +160,17 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
     _info('------------IRMAD -------------')
     rasterBands1 = [inDataset1.GetRasterBand(b) for b in band_pos]
     rasterBands2 = [inDataset2.GetRasterBand(b) for b in band_pos]
+    ref_sentinels = rio.band_nodata(inDataset1, nodata_ref, band_pos)
+    tgt_sentinels = rio.band_nodata(inDataset2, nodata_tgt, band_pos)
 
     # Sanity-check: any band that is entirely zero would make the algorithm
     # degenerate (singular covariance). Bail out early with a clear message.
     for k, rb in enumerate(rasterBands1):
-        if not rb.ReadAsArray().any():
+        if not _has_nonzero(rb, x0, y0, cols, rows, block_rows, feedback):
             _error(f"\nERROR: band {band_pos[k]} of '{basename1}' has only "
                    f"zeros — please check it.\n")
     for k, rb in enumerate(rasterBands2):
-        if not rb.ReadAsArray().any():
+        if not _has_nonzero(rb, x2, y2, cols, rows, block_rows, feedback):
             _error(f"\nERROR: band {band_pos[k]} of '{basename2}' has only "
                    f"zeros — please check it.\n")
 
@@ -141,6 +179,8 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
     rhos = np.zeros((max_iters, bands))
     results = []
     sigMADs = means1 = means2 = A = B = None
+    minimums = np.full(2, np.inf)
+    maximums = np.full(2, -np.inf)
 
     delta_thres = 1.0 - conv_threshold
     _info(f'\nStop condition: max iterations ({max_iters}) or delta < {round(delta_thres, 5)}\n'
@@ -155,15 +195,23 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
         try:
             # ---- pass 1: accumulate weighted covariance over the full image
             for ry, nr in _iter_row_blocks(rows, block_rows):
+                rio.check_cancel(feedback)
                 tile_ref = _read_block(rasterBands1, x0, y0 + ry, cols, nr)
                 tile_tgt = _read_block(rasterBands2, x2, y2 + ry, cols, nr)
                 tile = np.concatenate((tile_ref, tile_tgt), axis=1)
 
                 # Exclude rows where any image has a fully-zero pixel
-                # (treated as no-data) — preserves the original behaviour.
+                # (treated as no-data) — preserves the original behaviour —
+                # plus any row whose bands contain the declared nodata value.
                 nz_ref = tile_ref.any(axis=1)
                 nz_tgt = tile_tgt.any(axis=1)
-                keep = nz_ref & nz_tgt
+                keep = (nz_ref & nz_tgt & _valid_rows(tile_ref, ref_sentinels)
+                        & _valid_rows(tile_tgt, tgt_sentinels))
+                tile = tile[keep]
+
+                if bands == 1 and current_iter == 0 and len(tile):
+                    minimums = np.minimum(minimums, tile.min(axis=0))
+                    maximums = np.maximum(maximums, tile.max(axis=0))
 
                 if current_iter > 0:
                     # MAD variates and chi-square statistic for weighting
@@ -172,11 +220,15 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
                     chisqr = np.sum((mads / sigMADs[0]) ** 2, axis=1)
                     # chi2.sf == 1 - chi2.cdf, but stable in the upper tail
                     wts = stats.chi2.sf(chisqr, bands)
-                    cpm.update(tile[keep], wts[keep])
+                    cpm.update(tile, wts)
                 else:
-                    cpm.update(tile[keep])
+                    cpm.update(tile)
 
             # ---- canonical-correlation step
+            if bands == 1 and current_iter == 0 and np.any(minimums == maximums):
+                side = 'reference' if minimums[0] == maximums[0] else 'target'
+                _error(f'The single-band {side} has no variation among valid overlap pixels; '
+                       'IR-MAD requires nonzero variance in both images.')
             S = cpm.covariance()
             means = cpm.means()
             cpm.reset()
@@ -202,7 +254,10 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
                 B = B[:, idx_b]
                 mu2 = mu2b[idx_b]
             else:
-                mu2 = (s12 * s21 / s22) / s11
+                if not (np.isfinite(s11[0, 0]) and np.isfinite(s22[0, 0])
+                        and s11[0, 0] > 0 and s22[0, 0] > 0):
+                    _error('Single-band IR-MAD requires finite, positive variance in both images.')
+                mu2 = np.ravel((s12 * s21 / s22) / s11)
                 A = np.array([[1.0 / np.sqrt(s11[0, 0])]])
                 B = np.array([[1.0 / np.sqrt(s22[0, 0])]])
 
@@ -210,7 +265,10 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
             # negative or slightly above 1, which would yield NaN.
             mu2 = np.clip(mu2, 0.0, 1.0)
             rho = np.sqrt(mu2)
-            sigma = np.sqrt(2.0 * (1.0 - rho))  # std of each MAD variate
+            # An exactly affine-related channel is a valid invariant. Bound
+            # its variance at numerical precision instead of dividing by zero
+            # or rejecting the other channels. Ordinary variates are unchanged.
+            sigma = np.sqrt(np.maximum(2.0 * (1.0 - rho), np.finfo(float).eps))
             delta = float(np.max(np.abs(rho - oldrho)))
 
             rhos[current_iter, :] = rho
@@ -253,7 +311,10 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
                 # allocates for the IR-MAD step (0→10% = clipper, 90→100% = radcal+mask).
                 feedback.setProgress(10 + int(80 * current_iter / max_iters))
 
-        except Exception as err:
+        except (rio.Cancelled, _FatalInputError):
+            raise  # deliberate fatal error (degenerate input) — do not swallow
+
+        except (np.linalg.LinAlgError, FloatingPointError, ValueError) as err:
             _info(
                 f"\n WARNING: exception at iteration {current_iter}: {err}\n"
                 f" Falling back to best-delta result computed so far. "
@@ -275,7 +336,7 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
 
             # Pick the iteration with the smallest delta — the run with the
             # most-converged canonical correlations.
-            best = sorted(results, key=itemgetter(0))[0]
+            best = min(results, key=itemgetter(0))
             _info(f"\n Best delta over all iterations: {round(best[0], 5)} "
                   f"(iteration {best[1]['iter']}). "
                   f"Final result computed with those parameters.")
@@ -291,29 +352,37 @@ def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, 
     _info(f'\nRHO: {rho}')
 
     # ---- write MAD variates + chi-square band to disk
-    driver = inDataset1.GetDriver()
-    outDataset = driver.Create(outfn, cols, rows, bands + 1, GDT_Float32)
+    rio.check_cancel(feedback)
+    outDataset = stack.enter_context(rio.create_raster(outfn, cols, rows, bands + 1, GDT_Float32))
     projection = inDataset1.GetProjection()
     geotransform = inDataset1.GetGeoTransform()
     if geotransform is not None:
         gt = list(geotransform)
-        gt[0] = gt[0] + x0 * gt[1]
-        gt[3] = gt[3] + y0 * gt[5]
-        outDataset.SetGeoTransform(tuple(gt))
+        gt[0] = gt[0] + x0 * gt[1] + y0 * gt[2]
+        gt[3] = gt[3] + x0 * gt[4] + y0 * gt[5]
+        rio.checked(outDataset.SetGeoTransform(tuple(gt)), 'Set MAD geotransform')
     if projection is not None:
-        outDataset.SetProjection(projection)
+        rio.checked(outDataset.SetProjection(projection), 'Set MAD projection')
     outBands = [outDataset.GetRasterBand(k + 1) for k in range(bands + 1)]
 
     for ry, nr in _iter_row_blocks(rows, block_rows):
+        rio.check_cancel(feedback)
         tile_ref = _read_block(rasterBands1, x0, y0 + ry, cols, nr)
         tile_tgt = _read_block(rasterBands2, x2, y2 + ry, cols, nr)
+        keep = (_valid_rows(tile_ref, ref_sentinels) & _valid_rows(tile_tgt, tgt_sentinels)
+                & tile_ref.any(axis=1) & tile_tgt.any(axis=1))
+        # Sanitize only after validity is known; excluded pixels receive inf
+        # chi-square so they cannot re-enter Radcal as high-probability samples.
+        tile_ref[~keep] = 0
+        tile_tgt[~keep] = 0
         mads = (tile_ref - means1[0]) @ A - (tile_tgt - means2[0]) @ B
         chisqr = np.sum((mads / sigMADs[0]) ** 2, axis=1)
+        chisqr[~keep] = np.inf
         for k in range(bands):
-            outBands[k].WriteArray(mads[:, k].reshape(nr, cols), 0, ry)
-        outBands[bands].WriteArray(chisqr.reshape(nr, cols), 0, ry)
+            rio.write_band(outBands[k], mads[:, k].reshape(nr, cols), 0, ry)
+        rio.write_band(outBands[bands], chisqr.reshape(nr, cols), 0, ry)
     for outBand in outBands:
-        outBand.FlushCache()
+        rio.checked(outBand.FlushCache(), 'Flush MAD band')
     outDataset = None
     inDataset1 = None
     inDataset2 = None

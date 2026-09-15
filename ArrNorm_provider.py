@@ -46,6 +46,14 @@ class ArrNormProvider(QgsProcessingProvider):
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
 
+    def supportedOutputRasterLayerExtensions(self):
+        # Virtual in QGIS 3.x; retained for the supported 3.36+ releases.
+        return ['tif', 'tiff']
+
+    def supportedOutputRasterLayerFormatAndExtensions(self):
+        # QGIS 4 replaces the virtual extension-only method with this one.
+        return [('GeoTIFF', 'tif'), ('GeoTIFF', 'tiff')]
+
     def id(self):
         """
         Returns the unique provider id, used for identifying the provider. This

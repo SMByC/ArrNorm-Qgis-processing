@@ -1,352 +1,214 @@
 #!/usr/bin/env python3
-# ******************************************************************************
-#  Name:     radcal.py
-#  Purpose:  Automatic radiometric normalization using IR-MAD invariants.
-#
-#  Given an IR-MAD output (MAD variates + chi-square band) plus the original
-#  reference/target images, this module:
-#    1. Selects no-change pixels via the chi-square 'no-change probability'.
-#    2. Fits a per-band orthogonal regression target -> reference on those.
-#    3. Applies the linear transform a + b*target to produce a normalized image.
-#
-#  Original implementation: Mort Canty, 2011. Refactored for numerical
-#  stability and to match the rest of the package style.
-#
-#  License: GPLv2+
-# ******************************************************************************
+"""IR-MAD invariant-pixel radiometric calibration (GPLv2+).
 
+Fits reference = intercept + slope * target with streaming TLS moments.
+Both fitting and application are block-wise; optional plots keep at most
+10,000 samples and do not select or change the fit's calibration samples.
+"""
 import ast
 import getopt
 import os
 import sys
-import time
+from contextlib import ExitStack
+from typing import Any
 
 import numpy as np
-from osgeo import gdal
-from osgeo.gdalconst import GA_ReadOnly
 from scipy import stats
 
-from ArrNorm.core.auxil.auxil import orthoregress
+from . import raster_io as rio
+from .auxil.auxil import OrthogonalFit
 
 try:
     from qgis.core import QgsProcessingException
 except ImportError:
-    QgsProcessingException = Exception
+    class _ProcessingException(RuntimeError):
+        pass
+    QgsProcessingException = _ProcessingException
 
-try:
-    import matplotlib
-    # 'Agg' is a non-interactive backend — required for safe use from
-    # multiprocessing workers and for headless servers. Must be set before
-    # importing pyplot.
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    _MPL_AVAILABLE = True
-except ImportError:
-    _MPL_AVAILABLE = False
-
-usage = '''
-Usage:
---------------------------------------------------------
-python radcal.py [-p "bandPositions"] [-d "spatialDimensions"]
-                 [-t no-change prob threshold] imadFile [fullSceneFile]
---------------------------------------------------------
-'''
+def _tile(dataset, pos, x, y, cols, rows):
+    return np.column_stack([rio.read_band(dataset.GetRasterBand(b), x, y, cols, rows).ravel()
+                            for b in pos]).astype(np.float64)
 
 
-# Output range per GDAL integer type. Used to clip the linear-regression
-# output before writing to disk, so negative or saturated values are
-# safely capped instead of silently wrapping around.
-_GDT_RANGES = {
-    gdal.GDT_Byte:   (0, 255),
-    gdal.GDT_UInt16: (0, 65535),
-    gdal.GDT_Int16:  (-32768, 32767),
-    gdal.GDT_UInt32: (0, 4294967295),
-    gdal.GDT_Int32:  (-2147483648, 2147483647),
-}
+def _paths(img_imad, img_ref, img_tgt, output):
+    if img_ref is None or img_tgt is None:
+        root, ext = os.path.splitext(os.path.basename(img_imad))
+        if not root.startswith('MAD(') or not root.endswith(')') or root.count('&') != 1:
+            raise QgsProcessingException('Cannot infer inputs from the MAD filename; '
+                                         'supply img_ref and img_tgt explicitly.')
+        reference, target = root[4:-1].split('&')
+        directory = os.path.dirname(os.path.abspath(img_imad))
+        img_ref = img_ref or os.path.join(directory, reference + ext)
+        img_tgt = img_tgt or os.path.join(directory, target)
+    if output is None:
+        output = os.path.splitext(img_tgt)[0] + '_norm.tif'
+    return img_ref, img_tgt, output
 
 
-def _clip_for_dtype(arr, gdal_dtype):
-    """Clip array to the valid output range for the given GDAL dtype.
+def _apply(target, output, pos, coefficients, out_dtype, nodata_tgt, neg_nodata,
+           feedback, block_rows, spatial, window=None):
+    x0, y0, cols, rows = window or (0, 0, target.RasterXSize, target.RasterYSize)
+    output_nd = nodata_tgt if nodata_tgt is not None else neg_nodata
+    if output_nd is not None:
+        output_nd = rio.validate_nodata(output_nd, out_dtype)
+    target_sentinels = rio.band_nodata(target, nodata_tgt, pos)
+    with rio.create_raster(output, cols, rows, len(pos), out_dtype) as dst:
+        rio.copy_spatial(spatial, dst)
+        for j in range(1, len(pos) + 1):
+            if output_nd is not None:
+                rio.checked(dst.GetRasterBand(j).SetNoDataValue(output_nd), 'Set output nodata')
+        for y, nr in rio.row_blocks(rows, block_rows):
+            rio.check_cancel(feedback)
+            tile = _tile(target, pos, x0, y0 + y, cols, nr)
+            valid = rio.valid_rows(tile, target_sentinels)
+            for j, (slope, intercept, _) in enumerate(coefficients, 1):
+                normalized = intercept + slope * tile[:, j - 1]
+                # Reject arithmetic failures before clipping can hide them or
+                # intentional NaN nodata is inserted into otherwise valid pixels.
+                if not np.isfinite(normalized[valid]).all():
+                    raise QgsProcessingException('Non-finite calibration output for valid pixels.')
+                negative = normalized < 0
+                normalized = rio.clip_values(normalized, out_dtype)
+                if neg_nodata is not None:
+                    normalized[negative] = neg_nodata
+                if nodata_tgt is not None:
+                    normalized[~valid] = output_nd
+                rio.write_band(dst.GetRasterBand(j), normalized.reshape(nr, cols), 0, y)
 
-    Float dtypes are returned unchanged. Without this, integer outputs
-    silently wrap on overflow / negative values (the previous behaviour).
-    """
-    rng = _GDT_RANGES.get(gdal_dtype)
-    if rng is None:
-        return arr
-    return np.clip(arr, rng[0], rng[1])
+
+def _plot(samples, coefficients, pos, output, total):
+    # Use an Agg canvas directly; never change another plugin's pyplot backend.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    count = min(len(pos), 6)
+    figure = Figure(figsize=(4.2 * min(count, 3), 4.2 * (1 if count <= 3 else 2)))
+    FigureCanvasAgg(figure)
+    for j in range(count):
+        ax = figure.add_subplot(1 if count <= 3 else 2, min(count, 3), j + 1)
+        x, y = samples[0][:, j], samples[1][:, j]
+        slope, intercept, corr = coefficients[j]
+        ax.scatter(x, y, s=1, alpha=0.25)
+        bounds = np.array([x.min(), x.max()])
+        ax.plot(bounds, intercept + slope * bounds, color='crimson')
+        ax.set_title(f'Band {pos[j]}: R²={corr ** 2:.3f}')
+        ax.set_xlabel('Target')
+        ax.set_ylabel('Reference')
+    figure.suptitle(f'Radcal: {total:,} invariant pixels; displaying up to 10,000')
+    figure.tight_layout()
+    figure.savefig(os.path.splitext(output)[0] + '_radcal.png', dpi=150)
 
 
 def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
          graphics=False, out_dtype=None, img_ref=None, img_tgt=None,
-         output=None, feedback=None):
+         output=None, feedback=None, *, neg_nodata=None, nodata_ref=None,
+         nodata_tgt=None, block_rows=rio.DEFAULT_BLOCK_ROWS):
+    """Calibrate all selected bands, preserving their order and shared validity.
 
-    # -- Logging helpers: use QGIS feedback when available, print otherwise --
-    def _info(msg):
-        if feedback is not None:
-            feedback.pushInfo(msg)
+    Explicit input paths bypass legacy MAD filename inference. Cancellation
+    returns None only after every dataset has been closed.
+    """
+    def info(message):
+        if feedback is None:
+            print(message)
         else:
-            print(msg)
+            feedback.pushInfo(message)
 
-    def _error(msg):
-        if feedback is not None:
-            feedback.reportError(msg, fatalError=True)
-        raise QgsProcessingException(msg)
+    rio.validate_options(1, 0.99, ncp_threshold)
+    img_ref, img_tgt, output = _paths(img_imad, img_ref, img_tgt, output)
+    try:
+        with ExitStack() as stack:
+            rio.check_cancel(feedback)
+            mad = stack.enter_context(rio.open_raster(img_imad))
+            ref = stack.enter_context(rio.open_raster(img_ref))
+            tgt = stack.enter_context(rio.open_raster(img_tgt))
+            pos = list(pos) if pos is not None else list(range(1, ref.RasterCount + 1))
+            if not pos or any(b < 1 or b > min(ref.RasterCount, tgt.RasterCount) for b in pos):
+                raise QgsProcessingException('Invalid calibration band selection.')
+            x0, y0, cols, rows = dims or (0, 0, mad.RasterXSize, mad.RasterYSize)
+            if (cols <= 0 or rows <= 0 or x0 < 0 or y0 < 0 or mad.RasterCount < 2
+                    or cols > mad.RasterXSize or rows > mad.RasterYSize
+                    or any(x0 + cols > ds.RasterXSize or y0 + rows > ds.RasterYSize
+                           for ds in (ref, tgt))):
+                raise QgsProcessingException('Calibration window is outside the input rasters.')
+            if out_dtype is None:
+                out_dtype = rio.promote_dtype(*(ds.GetRasterBand(b).DataType
+                                               for ds in (ref, tgt) for b in pos))
+            for value in (nodata_tgt, neg_nodata):
+                if value is not None:
+                    rio.validate_nodata(value, out_dtype)
+            if neg_nodata is not None:
+                neg_nodata = rio.validate_nodata(neg_nodata, out_dtype)
 
-    def _canceled():
-        return feedback is not None and feedback.isCanceled()
+            ref_sentinels = rio.band_nodata(ref, nodata_ref, pos)
+            tgt_sentinels = rio.band_nodata(tgt, nodata_tgt, pos)
 
-    if img_target is not None:
-        path = os.path.dirname(img_target)
-        basename = os.path.basename(img_target)
-        root, ext = os.path.splitext(basename)
-        fsoutfn = os.path.join(path, root + '_norm_all' + ext)
-
-    # Derive reference/target/output paths from the iMAD filename unless
-    # explicitly provided (the QGIS plugin passes them directly).
-    path = os.path.dirname(os.path.abspath(img_imad))
-    basename = os.path.basename(img_imad)
-    root, ext = os.path.splitext(basename)
-    b = root.find('(')
-    err_idx = root.find(')')
-    referenceroot, targetbasename = root[b + 1:err_idx].split('&')
-    referencefn = img_ref if img_ref is not None else os.path.join(path, referenceroot + ext)
-    targetfn = img_tgt if img_tgt is not None else os.path.join(path, targetbasename)
-    targetroot, targetext = os.path.splitext(targetbasename)
-    outfn = output if output is not None else os.path.join(path, targetroot + '_norm' + targetext)
-
-    imadDataset = gdal.Open(img_imad, GA_ReadOnly)
-    if imadDataset is None:
-        _error(f'Error: could not open iMAD file: {img_imad}')
-    imadbands = imadDataset.RasterCount
-    cols = imadDataset.RasterXSize
-    rows = imadDataset.RasterYSize
-
-    referenceDataset = gdal.Open(referencefn, GA_ReadOnly)
-    targetDataset = gdal.Open(targetfn, GA_ReadOnly)
-    if referenceDataset is None or targetDataset is None:
-        _error('Error: could not open reference/target image.')
-
-    if pos is None:
-        pos = list(range(1, referenceDataset.RasterCount + 1))
-    if dims is None:
-        x0 = y0 = 0
-    else:
-        x0, y0, cols, rows = dims
-
-    # The last iMad band is the chi-square statistic over the MAD variates.
-    # Under the null hypothesis (no change), it follows chi^2 with
-    # (imadbands - 1) degrees of freedom — the # of MAD variates.
-    # NCP = P(X >= chisqr) = sf(chisqr), which is numerically far more
-    # accurate than 1 - cdf() in the relevant upper tail.
-    chisqr = imadDataset.GetRasterBand(imadbands).ReadAsArray(0, 0, cols, rows).ravel()
-    ncp = stats.chi2.sf(chisqr, imadbands - 1)
-    idx = np.where(ncp > ncp_threshold)
-    _info(time.asctime())
-    _info(f'reference: {referencefn}')
-    _info(f'target   : {targetfn}')
-    _info(f'no-change probability threshold: {ncp_threshold}')
-    _info(f'no-change pixels: {len(idx[0])}')
-
-    if len(idx[0]) < 2:
-        _error(
-            f"Error: only {len(idx[0])} no-change pixels selected "
-            f"(threshold={ncp_threshold}). Lower -t to keep more pixels.")
-
-    start = time.time()
-    driver = targetDataset.GetDriver()
-    outDataset = driver.Create(outfn, cols, rows, len(pos), out_dtype)
-    projection = imadDataset.GetProjection()
-    geotransform = imadDataset.GetGeoTransform()
-    if geotransform is not None:
-        outDataset.SetGeoTransform(geotransform)
-    if projection is not None:
-        outDataset.SetProjection(projection)
-
-    aa = []
-    bb = []
-    if graphics and not _MPL_AVAILABLE:
-        _info('Warning: matplotlib not available — graphics output disabled.')
-        graphics = False
-
-    bands = len(pos)
-    fig = None
-    plot_nrows = plot_ncols = 0
-    if graphics:
-        # Lay out band scatters in a grid of at most 3 cols × 2 rows = 6 panels.
-        plot_ncols = min(bands, 3)
-        plot_nrows = 2 if bands > 3 else 1
-        n_total = cols * rows
-        n_nochange = len(idx[0])
-        pct_nochange = 100.0 * n_nochange / n_total if n_total else 0.0
-        fig, axes = plt.subplots(
-            nrows=plot_nrows,
-            ncols=plot_ncols,
-            figsize=(4.2 * plot_ncols, 4.2 * plot_nrows),
-            squeeze=False,
-        )
-        fig.suptitle(
-            f'RadCal: per-band orthogonal regression on IR-MAD no-change pixels\n'
-            f'target: {os.path.basename(targetfn)}   '
-            f'reference: {os.path.basename(referencefn)}\n'
-            f'no-change pixels: {n_nochange:,} / {n_total:,} '
-            f'({pct_nochange:.2f}%)   '
-            f'NCP threshold: {ncp_threshold}',
-            fontsize=10,
-        )
-
-    for j, k in enumerate(pos, start=1):
-        if _canceled():
-            return
-
-        x = referenceDataset.GetRasterBand(k).ReadAsArray(x0, y0, cols, rows).astype(np.float64).ravel()
-        y = targetDataset.GetRasterBand(k).ReadAsArray(x0, y0, cols, rows).astype(np.float64).ravel()
-        b_slope, a_intercept, R = orthoregress(y[idx], x[idx])
-        _info(f'band: {k}  slope: {b_slope:.6f}  intercept: {a_intercept:.6f}  correlation: {R:.6f}')
-        if graphics and j <= 6:
-            row, col = divmod(j - 1, 3)
-            ax = axes[row][col]
-
-            xt = y[idx]          # target values at no-change pixels (x-axis)
-            yr = x[idx]          # reference values at no-change pixels (y-axis)
-
-            # Independent percentile-based axis limits — each axis is framed
-            # tightly around its own data. Using one shared range for both
-            # axes would push the data cluster into a corner whenever the
-            # radiometric drift is large (e.g. target ~50, reference ~150).
-            x_lo = float(np.percentile(xt, 1))
-            x_hi = float(np.percentile(xt, 99))
-            y_lo = float(np.percentile(yr, 1))
-            y_hi = float(np.percentile(yr, 99))
-            # Add 3% padding so points/lines aren't flush against the frame
-            pad_x = 0.03 * (x_hi - x_lo) if x_hi > x_lo else 1.0
-            pad_y = 0.03 * (y_hi - y_lo) if y_hi > y_lo else 1.0
-            x_lo, x_hi = x_lo - pad_x, x_hi + pad_x
-            y_lo, y_hi = y_lo - pad_y, y_hi + pad_y
-
-            # Vertical-residual RMSE of the fit — informative even though
-            # orthoregress minimizes perpendicular distance, because it's the
-            # quantity actually applied to the target band on output.
-            residuals = yr - (a_intercept + b_slope * xt)
-            rmse = float(np.sqrt(np.mean(residuals ** 2)))
-
-            # 1:1 reference line: only draw the segment of y=x that actually
-            # falls inside the visible (x_lo..x_hi, y_lo..y_hi) window. If
-            # there is no overlap (data is entirely above or below the
-            # diagonal) the line is simply omitted.
-            one_lo = max(x_lo, y_lo)
-            one_hi = min(x_hi, y_hi)
-            draw_one_to_one = one_hi > one_lo
-
-            # Draw order: 1:1 reference behind, scatter mid, fit line on top.
-            if draw_one_to_one:
-                ax.plot([one_lo, one_hi], [one_lo, one_hi],
-                        color='0.6', linestyle=':', lw=0.8, alpha=0.7,
-                        zorder=1, label='1:1')
-            ax.scatter(xt, yr, s=1, alpha=0.25,
-                       color='steelblue', rasterized=True, zorder=2)
-            line_x = np.array([x_lo, x_hi])
-            ax.plot(line_x, a_intercept + b_slope * line_x,
-                    color='crimson', lw=1.6, zorder=3,
-                    label=f'fit: y = {a_intercept:.2f} + {b_slope:.3f}·x')
-
-            ax.set_title(f'Band {k}   R²={R ** 2:.3f}   RMSE={rmse:.2f}',
-                         fontsize=10)
-            ax.set_xlabel('Target')
-            ax.set_ylabel('Reference')
-            ax.set_xlim(x_lo, x_hi)
-            ax.set_ylim(y_lo, y_hi)
-            # Note: no aspect='equal' — equal aspect with independent axes
-            # would distort the visible plot region; we let matplotlib choose
-            # the aspect that fills each subplot.
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc='upper left', fontsize=8, framealpha=0.85)
-        aa.append(a_intercept)
-        bb.append(b_slope)
-        outBand = outDataset.GetRasterBand(j)
-        normalized = a_intercept + b_slope * y
-        normalized = _clip_for_dtype(normalized, out_dtype)
-        outBand.WriteArray(normalized.reshape(rows, cols), 0, 0)
-        outBand.FlushCache()
-
-    if graphics and fig is not None:
-        # Hide unused axes when bands < grid capacity (e.g. 4 bands → 2×3 = 6 slots, 2 empty)
-        for idx_ax in range(bands, plot_nrows * plot_ncols):
-            r, c = divmod(idx_ax, plot_ncols)
-            axes[r][c].set_visible(False)
-        # Reserve some headroom for the multi-line suptitle
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
-        # Save next to the normalized raster, same basename + _radcal.png
-        plot_path = os.path.join(
-            os.path.dirname(os.path.abspath(outfn)),
-            os.path.splitext(os.path.basename(outfn))[0] + '_radcal.png'
-        )
-        fig.savefig(plot_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        _info(f'radcal plot saved to: {plot_path}')
-    referenceDataset = None
-    targetDataset = None
-    outDataset = None
-    _info(f'result written to: {outfn}')
-
-    if img_target is not None:
-        _info(f'normalizing {img_target}...')
-        fsDataset = gdal.Open(img_target, GA_ReadOnly)
-        if fsDataset is None:
-            _error(f'Error: full-scene file could not be opened: {img_target}')
-        fcols = fsDataset.RasterXSize
-        frows = fsDataset.RasterYSize
-        driver = fsDataset.GetDriver()
-        outDataset = driver.Create(fsoutfn, fcols, frows, len(pos), out_dtype)
-        projection = fsDataset.GetProjection()
-        geotransform = fsDataset.GetGeoTransform()
-        if geotransform is not None:
-            outDataset.SetGeoTransform(geotransform)
-        if projection is not None:
-            outDataset.SetProjection(projection)
-        for j, k in enumerate(pos, start=1):
-            inBand = fsDataset.GetRasterBand(k)
-            outBand = outDataset.GetRasterBand(j)
-            for i in range(frows):
-                y = inBand.ReadAsArray(0, i, fcols, 1).astype(np.float64)
-                normalized = aa[j - 1] + bb[j - 1] * y
-                normalized = _clip_for_dtype(normalized, out_dtype)
-                outBand.WriteArray(normalized, 0, i)
-            outBand.FlushCache()
-        outDataset = None
-        fsDataset = None
-        _info(f'full result written to: {fsoutfn}')
-        return fsoutfn
-
-    _info(f'elapsed time: {time.time() - start:.2f}s')
-    return outfn
+            fits = [OrthogonalFit() for _ in pos]
+            samples_ref, samples_tgt = [], []
+            sample_count = total = 0
+            for y, nr in rio.row_blocks(rows, block_rows):
+                rio.check_cancel(feedback)
+                ref_tile = _tile(ref, pos, x0, y0 + y, cols, nr)
+                tgt_tile = _tile(tgt, pos, x0, y0 + y, cols, nr)
+                chisqr = rio.read_band(mad.GetRasterBand(mad.RasterCount), 0, y, cols, nr).ravel()
+                # One fresh shared mask per block; no band can mutate another
+                # band's regression sample set. Exclude gaps in any channel.
+                selected = ((stats.chi2.sf(chisqr, mad.RasterCount - 1) > ncp_threshold)
+                            & rio.valid_rows(ref_tile, ref_sentinels)
+                            & rio.valid_rows(tgt_tile, tgt_sentinels))
+                x, y_ref = tgt_tile[selected], ref_tile[selected]
+                total += len(x)
+                for j, fit in enumerate(fits):
+                    fit.update(x[:, j], y_ref[:, j])
+                if graphics and sample_count < 10000:
+                    size = min(len(x), 10000 - sample_count)
+                    samples_ref.append(y_ref[:size].copy())
+                    samples_tgt.append(x[:size].copy())
+                    sample_count += size
+            info(f'no-change pixels after nodata filtering: {total}')
+            if total < 2:
+                raise QgsProcessingException(f'Only {total} no-change pixels remain after excluding '
+                                             'nodata. Check overlap, nodata settings and threshold.')
+            try:
+                coefficients = [fit.coefficients() for fit in fits]
+            except ValueError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+            for b, (slope, intercept, corr) in zip(pos, coefficients):
+                info(f'band: {b}  slope: {slope:.6f}  intercept: {intercept:.6f}  correlation: {corr:.6f}')
+            _apply(tgt, output, pos, coefficients, out_dtype, nodata_tgt, neg_nodata,
+                   feedback, block_rows, mad, (x0, y0, cols, rows))
+            if graphics:
+                try:
+                    _plot((np.concatenate(samples_tgt), np.concatenate(samples_ref)),
+                          coefficients, pos, output, total)
+                except ImportError:
+                    info('Matplotlib is unavailable; graphics disabled.')
+            if img_target is not None:
+                full = stack.enter_context(rio.open_raster(img_target))
+                output = os.path.splitext(img_target)[0] + '_norm_all.tif'
+                _apply(full, output, pos, coefficients, out_dtype, nodata_tgt,
+                       neg_nodata, feedback, block_rows, full)
+            rio.check_cancel(feedback)
+            return output
+    except rio.Cancelled:
+        return None
 
 
 if __name__ == '__main__':
     options, args = getopt.getopt(sys.argv[1:], 'hnp:d:t:')
-    pos = None
-    dims = None
-    ncp_threshold = 0.95
-    fsfn = None
-    graphics = True
+    kwargs: dict[str, Any] = {'graphics': True}
     for option, value in options:
         if option == '-h':
-            print(usage)
+            print('Usage: python -m ArrNorm.core.radcal [-n] [-p "bands"] [-d "window"] '
+                  '[-t probability] MADfile [fullSceneFile]')
             sys.exit()
-        elif option == '-n':
-            graphics = False
+        if option == '-n':
+            kwargs['graphics'] = False
         elif option == '-p':
-            pos = ast.literal_eval(value)
+            kwargs['pos'] = ast.literal_eval(value)
         elif option == '-d':
-            dims = ast.literal_eval(value)
+            kwargs['dims'] = ast.literal_eval(value)
         elif option == '-t':
-            ncp_threshold = float(value)
-    if (len(args) != 1) and (len(args) != 2):
-        print('Incorrect number of arguments')
-        print(usage)
-        sys.exit(1)
-    imadfn = args[0]
-    if len(args) == 2:
-        fsfn = args[1]
-
-    main(imadfn, ncp_threshold, pos, dims, fsfn, graphics=graphics)
+            kwargs['ncp_threshold'] = float(value)
+    if len(args) not in (1, 2):
+        sys.exit('Expected MADfile and optionally fullSceneFile.')
+    main(args[0], img_target=args[1] if len(args) == 2 else None, **kwargs)

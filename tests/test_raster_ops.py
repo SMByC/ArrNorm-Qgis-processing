@@ -1,53 +1,20 @@
+"""Pixel-wise mask creation/application and standalone negative-value conversion."""
 import numpy as np
 import pytest
 from ArrNorm.core import raster_ops
+from ArrNorm.tests.helpers import write_raster
 from osgeo import gdal
 
 
 def _create_test_raster(path, data, nodata=None, dtype=gdal.GDT_Float32):
     """Create a single-band GeoTIFF with the given numpy array."""
-    rows, cols = data.shape
-    driver = gdal.GetDriverByName("GTiff")
-    ds = driver.Create(path, cols, rows, 1, dtype)
-    ds.SetGeoTransform((0, 1, 0, 0, 0, -1))
-    ds.SetProjection("")
-    band = ds.GetRasterBand(1)
-    if nodata is not None:
-        band.SetNoDataValue(nodata)
-    band.WriteArray(data.astype(gdal_array_dtype(dtype)))
-    band.FlushCache()
-    ds = None
+    _create_multi_band_raster(path, [data], nodata=nodata, dtype=dtype)
 
 
 def _create_multi_band_raster(path, bands_data, nodata=None, dtype=gdal.GDT_Float32):
     """Create a multi-band GeoTIFF."""
-    rows, cols = bands_data[0].shape
-    nbands = len(bands_data)
-    driver = gdal.GetDriverByName("GTiff")
-    ds = driver.Create(path, cols, rows, nbands, dtype)
-    ds.SetGeoTransform((0, 1, 0, 0, 0, -1))
-    ds.SetProjection("")
-    for b, data in enumerate(bands_data, start=1):
-        band = ds.GetRasterBand(b)
-        if nodata is not None:
-            band.SetNoDataValue(nodata)
-        band.WriteArray(data.astype(gdal_array_dtype(dtype)))
-        band.FlushCache()
-    ds = None
-
-
-def gdal_array_dtype(gdal_dtype):
-    """Map GDAL type to numpy dtype."""
-    mapping = {
-        gdal.GDT_Byte: np.uint8,
-        gdal.GDT_UInt16: np.uint16,
-        gdal.GDT_Int16: np.int16,
-        gdal.GDT_UInt32: np.uint32,
-        gdal.GDT_Int32: np.int32,
-        gdal.GDT_Float32: np.float32,
-        gdal.GDT_Float64: np.float64,
-    }
-    return mapping[gdal_dtype]
+    write_raster(path, bands_data, dtype=dtype, nodata=nodata,
+                 geotransform=(0, 1, 0, 0, 0, -1), projection='')
 
 
 class TestNoNegativeValue:
@@ -218,6 +185,37 @@ class TestApplyMask:
         with pytest.raises(RuntimeError, match="don't match"):
             raster_ops.apply_mask(inp_img, inp_mask, out, nodata_value=0)
 
+    def test_masked_pixels_carry_nonzero_nodata(self, tmp_path):
+        img = np.array([[10, 20], [30, 40]], dtype=np.float32)
+        mask = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+        inp_img = str(tmp_path / "img.tif")
+        inp_mask = str(tmp_path / "mask.tif")
+        out = str(tmp_path / "out.tif")
+        _create_test_raster(inp_img, img)
+        _create_test_raster(inp_mask, mask, dtype=gdal.GDT_Byte)
+
+        raster_ops.apply_mask(inp_img, inp_mask, out, nodata_value=-9999.0)
+
+        ds = gdal.Open(out)
+        band = ds.GetRasterBand(1)
+        result = band.ReadAsArray()
+        expected = np.array([[10, -9999.0], [-9999.0, 40]], dtype=np.float32)
+        np.testing.assert_array_equal(result, expected)
+        assert band.GetNoDataValue() == -9999.0
+        ds = None
+
+    def test_unrepresentable_nodata_raises(self, tmp_path):
+        img = np.array([[10, 20], [30, 40]], dtype=np.uint16)
+        mask = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+        inp_img = str(tmp_path / "img.tif")
+        inp_mask = str(tmp_path / "mask.tif")
+        out = str(tmp_path / "out.tif")
+        _create_test_raster(inp_img, img, dtype=gdal.GDT_UInt16)
+        _create_test_raster(inp_mask, mask, dtype=gdal.GDT_Byte)
+
+        with pytest.raises(RuntimeError, match="not representable"):
+            raster_ops.apply_mask(inp_img, inp_mask, out, nodata_value=-9999.0)
+
     def test_block_boundary_handling(self, tmp_path):
         arr = np.arange(300 * 4, dtype=np.float32).reshape(300, 4)
         mask = np.ones((300, 4), dtype=np.uint8)
@@ -233,3 +231,12 @@ class TestApplyMask:
         result = ds.GetRasterBand(1).ReadAsArray()
         np.testing.assert_array_equal(result, arr)
         ds = None
+
+
+def test_apply_mask_rejects_shifted_grid(tmp_path):
+    write_raster(tmp_path / 'image.tif', [np.ones((2, 2))])
+    write_raster(tmp_path / 'mask.tif', [np.ones((2, 2))],
+                 geotransform=(10., 10., 0., 0., 0., -10.))
+    with pytest.raises(RuntimeError, match='same pixel grid'):
+        raster_ops.apply_mask(str(tmp_path / 'image.tif'), str(tmp_path / 'mask.tif'),
+                              str(tmp_path / 'out.tif'), 0)

@@ -19,6 +19,8 @@
 
 Custom Processing parameter widget wrappers for the ArrNorm algorithm dialog.
 """
+import math
+
 from qgis.PyQt.QtWidgets import QWidget, QHBoxLayout, QLabel, QCheckBox
 
 from qgis.core import QgsRasterLayer, QgsProcessingUtils
@@ -40,10 +42,10 @@ def _resolve_layer(value, context):
             layer, _ = layer.valueAsString(context.expressionContext())
         if isinstance(layer, str) and layer:
             layer = QgsProcessingUtils.mapLayerFromString(layer, context)
-    except Exception:
+        if isinstance(layer, QgsRasterLayer) and layer.isValid():
+            return layer
+    except (RuntimeError, TypeError, ValueError):
         return None
-    if isinstance(layer, QgsRasterLayer) and layer.isValid():
-        return layer
     return None
 
 
@@ -71,9 +73,8 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
 
     Behaviour (standard dialog):
       * disabled while the bound checkbox is unchecked;
-      * when a layer is selected, if it declares a nodata value the spin box
-        is pre-filled with it (explicit); otherwise it stays on "Auto" and the
-        algorithm auto-detects (fallback 0);
+      * metadata is only a display preview; Auto always passes None so the
+        algorithm reads the exact sentinel (including NaN) at execution time;
       * the user can always override, and overrides are never clobbered.
     """
 
@@ -82,6 +83,7 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         self._layer_param = layer_param
         self._context = dataobjects.createContext()
         self._user_modified = False
+        self._explicit_value = 0.0
         self._programmatic = False
         self._bool_wrapper = None
         self._layer_wrapper = None
@@ -92,7 +94,7 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         layout.setSpacing(6)
 
         self._spin = QgsDoubleSpinBox()
-        self._spin.setDecimals(4)
+        self._spin.setDecimals(15)
         self._spin.setMinimum(-1.0e12)
         self._spin.setMaximum(1.0e12)
         self._spin.setValue(0.0)
@@ -116,11 +118,14 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         self._programmatic = True
         try:
             if value is None or value == '':
+                self._user_modified = False
                 self._auto.setChecked(True)
                 self._spin.setEnabled(False)
             else:
+                self._user_modified = True
+                self._explicit_value = float(value)
                 self._auto.setChecked(False)
-                self._spin.setEnabled(True)
+                self._spin.setEnabled(self._row_enabled())
                 try:
                     self._spin.setValue(float(value))
                 except (TypeError, ValueError):
@@ -128,16 +133,21 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         finally:
             self._programmatic = False
 
+        if self._auto.isChecked():
+            self._apply_layer_default(keep_auto=True)
+        self._sync_enabled_state()
+
     def value(self):
         if self._auto.isChecked():
             return None
-        return self._spin.value()
+        return self._explicit_value
 
     # -- internal slots -----------------------------------------------------
 
     def _on_user_change(self, *args):
         if not self._programmatic:
             self._user_modified = True
+            self._explicit_value = self._spin.value()
         self.widgetValueHasChanged.emit(self)
 
     def _on_auto_toggled(self, checked):
@@ -148,6 +158,7 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
                 self._apply_layer_default(keep_auto=True)
             else:
                 self._user_modified = True
+                self._explicit_value = self._spin.value()
         self.widgetValueHasChanged.emit(self)
 
     # -- cross-parameter binding (standard dialog only) ---------------------
@@ -205,7 +216,7 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
     def _apply_layer_default(self, keep_auto=False):
         if self._layer_wrapper is None:
             return
-        if not keep_auto and self._user_modified:
+        if not self._auto.isChecked() or (not keep_auto and self._user_modified):
             return
         if not self._row_enabled():
             return
@@ -216,18 +227,14 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         nodata = _layer_nodata(layer) if layer is not None else None
         self._programmatic = True
         try:
-            if nodata is not None:
+            if (nodata is not None and math.isfinite(nodata)
+                    and self._spin.minimum() <= nodata <= self._spin.maximum()):
                 self._spin.setValue(nodata)
-                if not keep_auto:
-                    # Layer change path: switch to explicit mode.
-                    self._auto.setChecked(False)
-                    self._spin.setEnabled(self._row_enabled())
-                # keep_auto path: Auto stays checked, spin stays greyed (set by caller).
             else:
-                if not keep_auto:
-                    # No declared nodata -> stay on Auto.
-                    self._auto.setChecked(True)
-                    self._spin.setEnabled(False)
+                self._spin.setValue(0.0)
+            self._spin.setToolTip(self.tr('Image nodata: {value}. Auto uses the exact metadata value.').format(
+                value=repr(nodata) if nodata is not None else 'not declared (fallback: 0)'))
+            self._spin.setEnabled(False)
         finally:
             self._programmatic = False
 

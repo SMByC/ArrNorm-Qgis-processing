@@ -103,14 +103,14 @@ test:
 	@echo "Regression Test Suite"
 	@echo "----------------------"
 
-	@-export PYTHONPATH=`pwd`/..:$(PYTHONPATH); \
+	@export PYTHONPATH=`pwd`/..:$(PYTHONPATH); \
 		export QGIS_DEBUG=0; \
 		export QGIS_LOG_FILE=/dev/null; \
+		export QT_QPA_PLATFORM=$${QT_QPA_PLATFORM:-offscreen}; \
 		python3 -m pytest tests/ -v
 	@echo "----------------------"
-	@echo "If you get a 'no module named qgis.core error, try sourcing"
-	@echo "the helper script we have provided first then run make test."
-	@echo "e.g. source run-env-linux.sh <path to qgis install>; make test"
+	@echo "Real QGIS/Qt tests run when QGIS 3.36+ Python bindings are available."
+	@echo "Set QGIS_PREFIX_PATH if your QGIS installation uses a custom prefix."
 	@echo "----------------------"
 
 deploy: compile doc transcompile
@@ -240,14 +240,17 @@ pylint:
 	@echo "e.g. source run-env-linux.sh <path to qgis install>; make pylint"
 	@echo "----------------------"
 
-# Run pep8 style checking
-#http://pypi.python.org/pypi/pep8
-pep8:
+# Run PEP8 style checking (pycodestyle is the successor of the retired
+# 'pep8' tool, renamed in 2016)
+#https://pypi.python.org/pypi/pycodestyle
+pep8: pycodestyle
+
+pycodestyle:
 	@echo
 	@echo "-----------"
 	@echo "PEP8 issues"
 	@echo "-----------"
-	@pep8 --repeat --ignore=E203,E121,E122,E123,E124,E125,E126,E127,E128 --exclude $(PEP8EXCLUDE) . || true
+	@pycodestyle --repeat --ignore=E203,E121,E122,E123,E124,E125,E126,E127,E128 --exclude $(PEP8EXCLUDE) . || true
 	@echo "-----------"
 	@echo "Ignored in PEP8 check:"
 	@echo $(PEP8EXCLUDE)
