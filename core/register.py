@@ -66,7 +66,7 @@ def main(img_ref, img_target, warpband=2, chunksize=None, feedback=None):
         return feedback is not None and feedback.isCanceled()
 
     _info('------------REGISTER-------------')
-    _info(time.asctime())
+    _info(f'started: {time.asctime()}')
     _info(f'reference image: {img_ref}')
     _info(f'warp image: {img_target}')
     _info(f'warp band: {warpband}')
@@ -176,7 +176,9 @@ def main(img_ref, img_target, warpband=2, chunksize=None, feedback=None):
     inDataset1 = None
     inDataset2 = None
     _info(f'Warped image written to: {outfn}')
-    _info(f'elapsed time: {time.time() - start:.2f}s')
+    elapsed = time.time() - start
+    time_text = f'{elapsed:.2f}s' if elapsed < 60 else f'{elapsed / 60:.2f}min'
+    _info(f'elapsed time: {time_text}')
 
     return outfn
 

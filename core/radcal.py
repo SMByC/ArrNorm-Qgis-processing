@@ -95,7 +95,9 @@ def _plot(samples, coefficients, pos, output, total):
         ax.set_ylabel('Reference')
     figure.suptitle(f'Radcal: {total:,} invariant pixels; displaying up to 10,000')
     figure.tight_layout()
-    figure.savefig(os.path.splitext(output)[0] + '_radcal.png', dpi=150)
+    plot_path = os.path.splitext(output)[0] + '_radcal.png'
+    figure.savefig(plot_path, dpi=150)
+    return plot_path
 
 
 def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
@@ -164,7 +166,7 @@ def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
                     samples_ref.append(y_ref[:size].copy())
                     samples_tgt.append(x[:size].copy())
                     sample_count += size
-            info(f'no-change pixels after nodata filtering: {total}')
+            info(f'no-change pixels used for calibration: {total}')
             if total < 2:
                 raise QgsProcessingException(f'Only {total} no-change pixels remain after excluding '
                                              'nodata. Check overlap, nodata settings and threshold.')
@@ -173,13 +175,15 @@ def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
             except ValueError as exc:
                 raise QgsProcessingException(str(exc)) from exc
             for b, (slope, intercept, corr) in zip(pos, coefficients):
-                info(f'band: {b}  slope: {slope:.6f}  intercept: {intercept:.6f}  correlation: {corr:.6f}')
+                info(f'band {b}: slope={slope:.6f}, intercept={intercept:.6f}, '
+                     f'correlation={corr:.6f}')
             _apply(tgt, output, pos, coefficients, out_dtype, nodata_tgt, neg_nodata,
                    feedback, block_rows, mad, (x0, y0, cols, rows))
             if graphics:
                 try:
-                    _plot((np.concatenate(samples_tgt), np.concatenate(samples_ref)),
-                          coefficients, pos, output, total)
+                    plot_path = _plot((np.concatenate(samples_tgt), np.concatenate(samples_ref)),
+                                      coefficients, pos, output, total)
+                    info(f'plot written to: {plot_path}')
                 except ImportError:
                     info('Matplotlib is unavailable; graphics disabled.')
             if img_target is not None:
@@ -188,6 +192,7 @@ def main(img_imad, ncp_threshold=0.95, pos=None, dims=None, img_target=None,
                 _apply(full, output, pos, coefficients, out_dtype, nodata_tgt,
                        neg_nodata, feedback, block_rows, full)
             rio.check_cancel(feedback)
+            info(f'\nRadiometric calibration applied to the target image ({len(pos)} bands)')
             return output
     except rio.Cancelled:
         return None

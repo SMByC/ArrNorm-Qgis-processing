@@ -130,7 +130,7 @@ def test_nested_runs_have_isolated_workspaces(tmp_path):
 
     def interleave(msg):
         push(msg)
-        if msg == '\nRadcal process':
+        if 'Radcal process' in msg:
             second.run()
     first.feedback.pushInfo = interleave
     first.run()

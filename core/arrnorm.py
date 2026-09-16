@@ -91,7 +91,7 @@ class Normalization:
             self.img_ref_clip = self.img_ref
             self.img_imad = self.img_norm = self.norm_masked = self.mask_file = None
             rio.check_cancel(self.feedback)
-            self.feedback.pushInfo(f'PROCESSING IMAGE: {os.path.basename(self.img_target)}')
+            self.feedback.pushInfo(f'Processing target image: {os.path.basename(self.img_target)}')
             self.feedback.setProgress(0)
             self.clipper()
             rio.check_cancel(self.feedback)
@@ -189,8 +189,12 @@ class Normalization:
             rio.check_cancel(self.feedback)
             raise QgsProcessingException(f'Error aligning reference image: {exc}') from exc
 
+    def _step(self, title):
+        """Log a highlighted header for a processing stage."""
+        self.feedback.pushInfo(f'\n-------------- {title} ---------------')
+
     def imad(self):
-        self.feedback.pushInfo('\niMad process')
+        self._step('iMad process')
         self.img_imad = self._artifacts.path('mad.tif')
         iMad.main(self.img_ref_clip, self.img_target, max_iters=self.max_iters,
                   conv_threshold=self.conv_threshold, output=self.img_imad,
@@ -199,7 +203,7 @@ class Normalization:
                   feedback=self.feedback)
 
     def radcal(self):
-        self.feedback.pushInfo('\nRadcal process')
+        self._step('Radcal process')
         self.img_norm = self._artifacts.path('calibrated.tif')
         radcal.main(self.img_imad, img_ref=self.img_ref_clip, img_tgt=self.img_target,
                     output=self.img_norm, out_dtype=self.out_dtype,

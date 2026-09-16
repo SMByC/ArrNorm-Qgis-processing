@@ -157,7 +157,6 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             f"images share the same CRS, pixel size, and spatial extent "
             f"before running the normalization.\n")
 
-    _info('------------IRMAD -------------')
     rasterBands1 = [inDataset1.GetRasterBand(b) for b in band_pos]
     rasterBands2 = [inDataset2.GetRasterBand(b) for b in band_pos]
     ref_sentinels = rio.band_nodata(inDataset1, nodata_ref, band_pos)
@@ -183,9 +182,10 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
     maximums = np.full(2, -np.inf)
 
     delta_thres = 1.0 - conv_threshold
-    _info(f'\nStop condition: max iterations ({max_iters}) or delta < {round(delta_thres, 5)}\n'
-          f'with auto selection of the best delta for the final result:')
-    _info(f' {ref_text + " ->"} iteration: 0, delta: 1.0 ({time.asctime()})')
+    delta_text = round(delta_thres, 5)
+    prefix = f'{ref_text} -> ' if ref_text else ''
+    _info(f'Stop condition: delta < {delta_text} or {max_iters} iterations')
+    previous_time = time.monotonic()
 
     current_iter = 0
     while current_iter < max_iters:
@@ -291,8 +291,12 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             B = B * sgn_cov
 
             current_iter += 1
-            _info(f' {ref_text + " ->"} iteration: {current_iter}, '
-                  f'delta: {round(delta, 5)} ({time.asctime()})')
+            now = time.monotonic()
+            elapsed = now - previous_time
+            previous_time = now
+            time_text = f'{elapsed:.2f}s' if elapsed < 60 else f'{elapsed / 60:.2f}min'
+            _info(f'{prefix}iteration {current_iter}/{max_iters}: '
+                  f'delta={delta:.5f}, time={time_text}')
             results.append((delta, {"iter": current_iter, "A": A, "B": B,
                                     "means1": means1, "means2": means2,
                                     "sigMADs": sigMADs, "rho": rho}))
@@ -302,8 +306,8 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             # Skip on the first iteration because oldrho starts at zero,
             # making delta a magnitude estimate rather than a convergence measure.
             if current_iter > 1 and delta < delta_thres:
-                _info(f' Convergence reached at iteration {current_iter} '
-                      f'(delta={round(delta, 5)} < {round(delta_thres, 5)})')
+                _info(f'{prefix}converged after {current_iter} iterations '
+                      f'(delta={delta:.5f} < {delta_text})')
                 break
 
             if feedback is not None:
@@ -315,10 +319,8 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             raise  # deliberate fatal error (degenerate input) — do not swallow
 
         except (np.linalg.LinAlgError, FloatingPointError, ValueError) as err:
-            _info(
-                f"\n WARNING: exception at iteration {current_iter}: {err}\n"
-                f" Falling back to best-delta result computed so far. "
-                f"Verify the input bands.\n")
+            _info(f'\n WARNING: iteration {current_iter + 1}/{max_iters} failed: {err}\n'
+                  f' Falling back to the best result computed so far; verify the input bands.\n')
             current_iter = max_iters  # exit the while-loop
 
         if current_iter == max_iters:
@@ -337,9 +339,8 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             # Pick the iteration with the smallest delta — the run with the
             # most-converged canonical correlations.
             best = min(results, key=itemgetter(0))
-            _info(f"\n Best delta over all iterations: {round(best[0], 5)} "
-                  f"(iteration {best[1]['iter']}). "
-                  f"Final result computed with those parameters.")
+            _info(f'\nBest delta: {best[0]:.5f} (iteration {best[1]["iter"]}); '
+                  "using this iteration's parameters for the final result.")
             delta = best[0]
             A = best[1]["A"]
             B = best[1]["B"]
@@ -349,7 +350,8 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             rho = best[1]["rho"]
             del results
 
-    _info(f'\nRHO: {rho}')
+    correlations = ', '.join(f'{value:.5f}' for value in rho)
+    _info(f'\nFinal canonical correlations: {correlations}')
 
     # ---- write MAD variates + chi-square band to disk
     rio.check_cancel(feedback)
@@ -387,8 +389,10 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
     inDataset1 = None
     inDataset2 = None
 
-    _info('result written to: ' + outfn)
-    _info(f'elapsed time: {time.time() - start:.2f}s')
+    _info(f'MAD variates and chi-square computed ({bands} bands)')
+    elapsed = time.time() - start
+    time_text = f'{elapsed:.2f}s' if elapsed < 60 else f'{elapsed / 60:.2f}min'
+    _info(f'elapsed time: {time_text}')
 
     if graphics:
         try:
