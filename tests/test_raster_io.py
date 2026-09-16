@@ -144,8 +144,13 @@ def test_gdal_error_modes_are_supported_without_changing_them(tmp_path, exceptio
         pytest.skip('Scoped exception modes require GDAL 3.7+')
     with gdal.ExceptionMgr(useExceptions=exceptions):
         state = gdal.GetUseExceptions()
-        with pytest.raises(RuntimeError, match='Cannot open raster'), rio.open_raster(tmp_path / 'missing.tif'):
-            pass
+        with pytest.raises(RuntimeError, match='Cannot open raster'):
+            rio.open_raster(tmp_path / 'missing.tif')
+        # GDAL 3.8 leaves the failed open in the global error state, and every
+        # later wrapped call -- including the mode queries below and
+        # ExceptionMgr exit -- re-raises that stale error (seen on the CI
+        # runner). Clear it so the test does not depend on the patch level.
+        gdal.ErrorReset()
         assert gdal.GetUseExceptions() == state
 
 
