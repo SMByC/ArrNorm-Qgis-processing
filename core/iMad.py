@@ -69,20 +69,33 @@ def _valid_rows(tile, nodata):
 
 def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, dims=None,
          graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS, feedback=None, *,
-         output_dir=None, nodata_ref=None, nodata_tgt=None, output=None):
+         output_dir=None, nodata_ref=None, nodata_tgt=None, output=None,
+         convergence=None, convergence_info=None):
+    """Write the MAD variates and chi-square band; return the written path.
+
+    A list passed as `convergence` receives the canonical correlations of every
+    completed iteration, which the calibration report plots. The return value
+    stays the output path so existing callers are unaffected. `graphics` is
+    accepted for signature compatibility only and is not forwarded any further:
+    this module no longer draws anything, because a Processing worker must not
+    open pyplot windows. `convergence_info` receives the termination status,
+    the completed `iterations`, the `selected_iteration`, the `delta_threshold`
+    and the `final_delta` (unavailable after only one completed iteration) —
+    all of which the report's convergence panel labels.
+    """
     rio.validate_options(max_iters, conv_threshold, 0.95)
     try:
         with ExitStack() as stack:
             return _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
-                         graphics, ref_text, block_rows, output_dir, nodata_ref,
-                         nodata_tgt, feedback, output, stack)
+                         ref_text, block_rows, output_dir, nodata_ref,
+                         nodata_tgt, feedback, output, stack, convergence, convergence_info)
     except rio.Cancelled:
         return None
 
 
 def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
-          graphics, ref_text, block_rows, output_dir, nodata_ref, nodata_tgt,
-          feedback, output, stack):
+          ref_text, block_rows, output_dir, nodata_ref, nodata_tgt,
+          feedback, output, stack, convergence=None, convergence_info=None):
     gdal.AllRegister()
     start = time.time()
 
@@ -176,6 +189,12 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
     cpm = auxil.Cpm(2 * bands)
     oldrho = np.zeros(bands)
     rhos = np.zeros((max_iters, bands))
+    # Counted separately from current_iter, which the fallback handler jumps to
+    # max_iters; only rows actually filled describe the convergence history.
+    completed = 0
+    termination = 'iteration limit'
+    selected_iteration = None
+    final_delta = None
     results = []
     sigMADs = means1 = means2 = A = B = None
     minimums = np.full(2, np.inf)
@@ -271,7 +290,6 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             sigma = np.sqrt(np.maximum(2.0 * (1.0 - rho), np.finfo(float).eps))
             delta = float(np.max(np.abs(rho - oldrho)))
 
-            rhos[current_iter, :] = rho
             oldrho = rho
 
             # Tile sigma and means to (1, ...) — broadcast over (n_pixels, bands)
@@ -300,12 +318,17 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             results.append((delta, {"iter": current_iter, "A": A, "B": B,
                                     "means1": means1, "means2": means2,
                                     "sigMADs": sigMADs, "rho": rho}))
+            rhos[completed, :] = rho
+            completed += 1
+            selected_iteration = current_iter
+            final_delta = delta if completed > 1 else None
 
             # Convergence check: stop when the maximum change in canonical
             # correlations falls below the threshold derived from conv_threshold.
             # Skip on the first iteration because oldrho starts at zero,
             # making delta a magnitude estimate rather than a convergence measure.
             if current_iter > 1 and delta < delta_thres:
+                termination = 'converged'
                 _info(f'{prefix}converged after {current_iter} iterations '
                       f'(delta={delta:.5f} < {delta_text})')
                 break
@@ -319,6 +342,7 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             raise  # deliberate fatal error (degenerate input) — do not swallow
 
         except (np.linalg.LinAlgError, FloatingPointError, ValueError) as err:
+            termination = 'numerical fallback'
             _info(f'\n WARNING: iteration {current_iter + 1}/{max_iters} failed: {err}\n'
                   f' Falling back to the best result computed so far; verify the input bands.\n')
             current_iter = max_iters  # exit the while-loop
@@ -339,6 +363,7 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
             # Pick the iteration with the smallest delta — the run with the
             # most-converged canonical correlations.
             best = min(results, key=itemgetter(0))
+            selected_iteration = best[1]['iter']
             _info(f'\nBest delta: {best[0]:.5f} (iteration {best[1]["iter"]}); '
                   "using this iteration's parameters for the final result.")
             delta = best[0]
@@ -394,14 +419,14 @@ def _main(img_ref, img_target, max_iters, conv_threshold, band_pos, dims,
     time_text = f'{elapsed:.2f}s' if elapsed < 60 else f'{elapsed / 60:.2f}min'
     _info(f'elapsed time: {time_text}')
 
-    if graphics:
-        try:
-            import matplotlib.pyplot as plt
-            x = np.arange(current_iter)
-            plt.plot(x, rhos[:current_iter, :])
-            plt.title('Canonical correlations')
-            plt.show()
-        except ImportError:
-            pass  # matplotlib not available; skip graphics
+    if convergence is not None:
+        # Hand the history to the caller instead of opening a blocking pyplot
+        # window: the calibration report draws it, and a Processing worker must
+        # never create widgets or touch another plugin's matplotlib state.
+        convergence.extend(rhos[:completed].tolist())
+    if convergence_info is not None:
+        convergence_info.update(termination=termination, iterations=completed,
+                                selected_iteration=selected_iteration, final_delta=final_delta,
+                                delta_threshold=delta_thres)
 
     return outfn

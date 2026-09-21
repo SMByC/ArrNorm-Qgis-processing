@@ -1,9 +1,20 @@
 """Run-owned files: aliases, cancellation, failed writes and atomic publication."""
+import errno
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 from ArrNorm.core import raster_io as rio
 from ArrNorm.core.arrnorm import Normalization
-from ArrNorm.tests.helpers import Feedback, build_pair, make_normalization, read_raster
+from ArrNorm.core.artifacts import RunArtifacts
+from ArrNorm.tests.helpers import (
+    Feedback,
+    build_pair,
+    make_normalization,
+    read_raster,
+    write_raster,
+)
 from osgeo import gdal
 
 try:
@@ -45,7 +56,11 @@ def test_output_named_like_an_intermediate_survives(tmp_path, name):
     norm.output_file = str(tmp_path / name)
     norm.run()
     assert read_raster(norm.output_file).max() > 0
-    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(['ref.tif', 'tgt.tif', name])
+    # The calibration report is published beside the output; nothing else is.
+    stem = Path(norm.report_path()).stem
+    reports = [f'{stem}.png', f'{stem}_bands.png'] if norm.graphics else []
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        ['ref.tif', 'tgt.tif', name] + reports)
 
 
 @pytest.mark.parametrize('name', ['tgt_radcal.tif', 'tgt_norm_masked.tif', 'ref (1)&copy.tif'])
@@ -240,3 +255,88 @@ def test_workspace_creation_error_is_explained_and_chained(tmp_path, monkeypatch
         cause = cause.__cause__
     assert failure in causes
     assert sorted(p.name for p in tmp_path.iterdir()) == ['ref.tif', 'tgt.tif']
+
+
+@pytest.mark.parametrize('alias', ['same', 'symlink', 'hardlink'])
+def test_report_publication_preserves_input_aliases(tmp_path, alias):
+    source = tmp_path / 'out_report.png'
+    source.write_bytes(b'input raster or VRT backing file')
+    destination = source
+    if alias != 'same':
+        destination = tmp_path / 'out_report_bands.png'
+        if alias == 'symlink':
+            destination.symlink_to(source)
+        else:
+            destination.hardlink_to(source)
+    feedback = Feedback()
+    artifacts = RunArtifacts(str(tmp_path / 'out.tif'), [str(source)], feedback)
+    try:
+        image = Path(artifacts.path('calibrated.tif'))
+        image.write_bytes(b'normalized raster')
+        report = Path(artifacts.path(destination.name))
+        report.write_bytes(b'report figure')
+        artifacts.publish(str(image), reports=[str(report)])
+        assert source.read_bytes() == b'input raster or VRT backing file'
+        assert destination.read_bytes() == source.read_bytes()
+        assert (tmp_path / 'out.tif').read_bytes() == b'normalized raster'
+        assert any('overwrite' in message for message in feedback.messages)
+    finally:
+        artifacts.clean()
+
+
+@pytest.mark.parametrize('use_vrt', [False, True])
+def test_report_destination_preserves_png_input_and_vrt_dependency(tmp_path, use_vrt):
+    values = np.arange(400, dtype=np.uint8).reshape(20, 20)
+    # Match PNG's unreferenced grid without relying on PAM sidecars (QGIS may
+    # disable PAM). Alignment/CRS behavior has its own integration tests.
+    spatial = {'geotransform': (0., 1., 0., 0., 0., 1.), 'projection': ''}
+    write_raster(tmp_path / 'ref.tif', [1.2 * values + 3], **spatial)
+    write_raster(tmp_path / 'tgt.tif', [values], dtype=gdal.GDT_Byte, **spatial)
+    source = tmp_path / 'out_report.png'
+    png = gdal.Translate(str(source), str(tmp_path / 'tgt.tif'), format='PNG')
+    assert png is not None
+    png = None
+    protected = source.read_bytes()
+    target = source
+    if use_vrt:
+        target = tmp_path / 'target.vrt'
+        vrt = gdal.Translate(str(target), str(source), format='VRT')
+        assert vrt is not None
+        vrt = None
+    norm = Normalization(str(tmp_path / 'ref.tif'), str(target), 3, .99, .95,
+                         False, False, None, False, None, False,
+                         str(tmp_path / 'out.tif'), Feedback())
+    norm.graphics = True  # destination validation precedes optional plotting imports
+    norm.run()
+    assert source.read_bytes() == protected
+    np.testing.assert_allclose(read_raster(tmp_path / 'out.tif'), 1.2 * values + 3, atol=1e-4)
+    assert any('overwrite' in message for message in norm.feedback.messages)
+    assert not norm.feedback.formatted_messages
+
+
+def test_report_publication_crosses_filesystems_into_a_separate_report_folder(tmp_path, monkeypatch):
+    # A session temp folder commonly lives on another filesystem, where rename
+    # fails with EXDEV; the report must still reach it after the raster commits.
+    elsewhere = tmp_path / 'session-temp'
+    elsewhere.mkdir()
+    artifacts = RunArtifacts(str(tmp_path / 'out.tif'), [], Feedback(), report_dir=str(elsewhere))
+    real_replace = os.replace
+
+    def replace(source, destination):
+        if str(destination).startswith(str(elsewhere)):
+            raise OSError(errno.EXDEV, 'Invalid cross-device link')
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(os, 'replace', replace)
+    try:
+        image = Path(artifacts.path('calibrated.tif'))
+        image.write_bytes(b'normalized raster')
+        report = Path(artifacts.path('out_report.png'))
+        report.write_bytes(b'report figure')
+        artifacts.publish(str(image), reports=[str(report)])
+    finally:
+        monkeypatch.undo()
+        artifacts.clean()
+    assert (tmp_path / 'out.tif').read_bytes() == b'normalized raster'
+    assert (elsewhere / 'out_report.png').read_bytes() == b'report figure'
+    assert not list(tmp_path.glob('*_report*.png'))

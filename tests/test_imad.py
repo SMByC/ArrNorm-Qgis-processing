@@ -85,3 +85,38 @@ def test_single_band_affine_relationship_remains_supported(tmp_path):
                        output=str(tmp_path / 'mad.tif'), feedback=Feedback())
     with rio.open_raster(result) as ds:
         assert np.isfinite(ds.ReadAsArray()).all()
+
+
+@pytest.mark.parametrize('mode', ['converged', 'iteration limit', 'numerical fallback'])
+def test_report_distinguishes_imad_termination_and_selected_iteration(tmp_path, monkeypatch, mode):
+    build_pair(tmp_path, rows=30, cols=40)
+    if mode == 'numerical fallback':
+        original = iMad.auxil.geneiv
+        calls = 0
+
+        def fail_third_iteration(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 5:
+                raise np.linalg.LinAlgError('injected eigensolver failure')
+            return original(*args)
+
+        monkeypatch.setattr(iMad.auxil, 'geneiv', fail_third_iteration)
+    history, info = [], {}
+    feedback = Feedback()
+    iMad.main(str(tmp_path / 'ref.tif'), str(tmp_path / 'tgt.tif'),
+              max_iters=1 if mode == 'iteration limit' else 5,
+              conv_threshold=.5 if mode == 'converged' else .999999999,
+              output=str(tmp_path / 'mad.tif'), feedback=feedback,
+              convergence=history, convergence_info=info)
+    assert info['termination'] == mode
+    assert info['iterations'] == len(history)
+    assert 1 <= info['selected_iteration'] <= len(history)
+    if len(history) > 1:
+        assert info['final_delta'] == pytest.approx(np.max(np.abs(np.diff(history, axis=0)[-1])))
+    else:
+        assert info['final_delta'] is None  # first-iteration delta is not convergence
+    if mode == 'numerical fallback':
+        assert len(history) == 2
+        assert any(f'iteration {info["selected_iteration"]}); using' in line
+                   for line in feedback.messages)

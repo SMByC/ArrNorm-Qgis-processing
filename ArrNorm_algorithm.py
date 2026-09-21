@@ -19,6 +19,7 @@
  ***************************************************************************/
 """
 import os
+import tempfile
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication
@@ -47,16 +48,21 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
     NODATA_MASK = 'NODATA_MASK'
     NODATA_MASK_VALUE = 'NODATA_MASK_VALUE'
     KEEP_MASK_LAYER = 'KEEP_MASK_LAYER'
+    REPORT = 'REPORT'
+    REPORT_BESIDE_OUTPUT = 'REPORT_BESIDE_OUTPUT'
     OUTPUT = 'OUTPUT'
 
     # Value-less parameters used only to render section headers in the dialog.
-    SECTION_REF_MASK = 'SECTION_REF_MASK'
+    SECTION_REF_IMAGE = 'SECTION_REF_IMAGE'
+    SECTION_TAR_IMAGE = 'SECTION_TAR_IMAGE'
     SECTION_OUTPUT = 'SECTION_OUTPUT'
+    SECTION_REPORT = 'SECTION_REPORT'
 
     # Dotted path so the Processing framework imports the GUI wrapper lazily
     # (only when building the dialog), keeping headless execution import-safe.
     _NODATA_WRAPPER = 'ArrNorm.gui.wrappers.ImageNodataWidgetWrapper'
     _SECTION_WRAPPER = 'ArrNorm.gui.wrappers.SectionHeaderWidgetWrapper'
+    _DEPENDENT_BOOL_WRAPPER = 'ArrNorm.gui.wrappers.DependentBooleanWidgetWrapper'
 
     def __init__(self):
         super().__init__()
@@ -102,6 +108,11 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         probability; only pixels above this threshold are included in the per-band regression. Higher \
         values select fewer but more reliable invariant pixels. If set too high, the algorithm may fail \
         due to insufficient no-change pixels.</p>
+
+        <p><b>Report</b> — Renders two diagnostic figures: a summary (agreement with the \
+        reference per band, the applied correction, where the no-change pixels are, and IR-MAD \
+        convergence) and a per-band page (affine fit and reference / target-before / target-after \
+        value distributions).</p>
         '''
         return html_help
 
@@ -170,7 +181,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         # an empty value (None) still means "auto-detect from the image".
         # =====================================================================
 
-        add_section(self.SECTION_REF_MASK, 'Reference image')
+        add_section(self.SECTION_REF_IMAGE, 'Reference image')
 
         self.addParameter(
             QgsProcessingParameterRasterLayer(
@@ -206,10 +217,10 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(mask_ref_nodata)
 
         # =====================================================================
-        # Target/output image processing
+        # Target image processing
         # =====================================================================
 
-        add_section(self.SECTION_OUTPUT, 'Target/output image')
+        add_section(self.SECTION_TAR_IMAGE, 'Target image')
 
         self.addParameter(
             QgsProcessingParameterRasterLayer(
@@ -243,23 +254,34 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         })
         self.addParameter(nodata_mask_value)
 
+        # =====================================================================
+        # Report
+        # =====================================================================
+
+        add_section(self.SECTION_REPORT, 'Report')
+
         self.addParameter(
             QgsProcessingParameterBoolean(
-                self.NEG_TO_NODATA,
-                self.tr('Convert negative values to nodata in normalized output'),
-                defaultValue=False,
+                self.REPORT,
+                self.tr('Generate the radiometric normalization report (plots)'),
+                defaultValue=True,
                 optional=True
             )
         )
 
-        self.addParameter(
-            QgsProcessingParameterBoolean(
-                self.KEEP_MASK_LAYER,
-                self.tr('Keep the nodata mask as a separate file (in the same output directory)'),
-                defaultValue=False,
-                optional=True
-            )
+        report_beside_output = QgsProcessingParameterBoolean(
+            self.REPORT_BESIDE_OUTPUT,
+            self.tr('Save the report next to the output file'),
+            defaultValue=False,
+            optional=True
         )
+        report_beside_output.setMetadata({
+            'widget_wrapper': {
+                'class': self._DEPENDENT_BOOL_WRAPPER,
+                'enabled_by': self.REPORT,
+            }
+        })
+        self.addParameter(report_beside_output)
 
         # =====================================================================
         # Advanced: algorithm tuning
@@ -307,12 +329,53 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         # Output
         # =====================================================================
 
+        add_section(self.SECTION_OUTPUT, 'Output')
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.NEG_TO_NODATA,
+                self.tr('Convert negative values to nodata in normalized output'),
+                defaultValue=False,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.KEEP_MASK_LAYER,
+                self.tr('Keep the nodata mask as a separate file (in the same output directory)'),
+                defaultValue=False,
+                optional=True
+            )
+        )
+
         self.addParameter(
             QgsProcessingParameterRasterDestination(
                 self.OUTPUT,
                 self.tr('Normalized output raster')
             )
         )
+
+    @staticmethod
+    def _report_folder(context):
+        """The Processing session temporary folder used for this plugin's runs.
+
+        A report the user did not ask to keep beside the output still needs a
+        real location: the run's own workspace is deleted on completion. QGIS
+        manages this folder's lifetime. The last-resort fallback is the system
+        temporary directory, which nothing cleans up for us; it is only reached
+        if `QgsProcessingUtils` is unavailable or both `tempFolder` overloads
+        fail.
+        """
+        try:
+            from qgis.core import QgsProcessingUtils
+            try:
+                folder = QgsProcessingUtils.tempFolder(context)
+            except TypeError:          # builds whose tempFolder takes no context
+                folder = QgsProcessingUtils.tempFolder()
+        except Exception:
+            folder = None
+        return folder or tempfile.gettempdir()
 
     def processAlgorithm(self, parameters, context, feedback):
         """
@@ -349,6 +412,13 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         else:
             nodata_mask_value = None
 
+        report = self.parameterAsBoolean(parameters, self.REPORT, context)
+        # An unchecked "next to the output" keeps the figures out of the output
+        # directory; they are still embedded in this log either way.
+        report_dir = (None if not report
+                      or self.parameterAsBoolean(parameters, self.REPORT_BESIDE_OUTPUT, context)
+                      else self._report_folder(context))
+
         arrnorm = Normalization(
             img_ref=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_REF, context)),
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
@@ -365,7 +435,9 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             nodata_mask_value=nodata_mask_value,
             keep_mask_layer=self.parameterAsBoolean(parameters, self.KEEP_MASK_LAYER, context),
             output_file=output_file,
-            feedback=feedback)
+            feedback=feedback,
+            report=report,
+            report_dir=report_dir)
 
         arrnorm.run()
 

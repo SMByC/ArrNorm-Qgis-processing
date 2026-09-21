@@ -25,7 +25,7 @@ from qgis.PyQt.QtWidgets import QWidget, QHBoxLayout, QLabel, QCheckBox
 
 from qgis.core import QgsRasterLayer, QgsProcessingUtils
 
-from processing.gui.wrappers import WidgetWrapper, DIALOG_STANDARD
+from processing.gui.wrappers import BooleanWidgetWrapper, WidgetWrapper, DIALOG_STANDARD
 from processing.tools import dataobjects
 
 from qgis.gui import QgsDoubleSpinBox
@@ -47,6 +47,24 @@ def _resolve_layer(value, context):
     except (RuntimeError, TypeError, ValueError):
         return None
     return None
+
+
+def _safe_connect(wrapper, slot):
+    """Follow another wrapper's value when that optional signal exists."""
+    signal = getattr(wrapper, 'widgetValueHasChanged', None)
+    if signal is not None:
+        try:
+            signal.connect(slot)
+        except Exception:
+            pass
+
+
+def _wrapper_name(wrapper):
+    """The parameter a wrapper is bound to, or None for an unusable wrapper."""
+    try:
+        return wrapper.parameterDefinition().name()
+    except Exception:
+        return None
 
 
 def _layer_nodata(layer):
@@ -169,28 +187,16 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
         for wrapper in wrappers:
             if wrapper is self:
                 continue
-            try:
-                name = wrapper.parameterDefinition().name()
-            except Exception:
-                continue
+            name = _wrapper_name(wrapper)
             if self._enabled_by and name == self._enabled_by:
                 self._bool_wrapper = wrapper
-                self._safe_connect(wrapper, self._on_enable_changed)
+                _safe_connect(wrapper, self._on_enable_changed)
             if self._layer_param and name == self._layer_param:
                 self._layer_wrapper = wrapper
-                self._safe_connect(wrapper, self._on_layer_changed)
+                _safe_connect(wrapper, self._on_layer_changed)
 
         self._sync_enabled_state()
         self._apply_layer_default()
-
-    @staticmethod
-    def _safe_connect(wrapper, slot):
-        signal = getattr(wrapper, 'widgetValueHasChanged', None)
-        if signal is not None:
-            try:
-                signal.connect(slot)
-            except Exception:
-                pass
 
     def _row_enabled(self):
         if self._bool_wrapper is None:
@@ -237,6 +243,46 @@ class ImageNodataWidgetWrapper(WidgetWrapper):
             self._spin.setEnabled(False)
         finally:
             self._programmatic = False
+
+
+class DependentBooleanWidgetWrapper(BooleanWidgetWrapper):
+    """Checkbox greyed out while the boolean parameter it depends on is unchecked.
+
+    Wired via parameter metadata::
+
+        param.setMetadata({'widget_wrapper': {
+            'class': 'ArrNorm.gui.wrappers.DependentBooleanWidgetWrapper',
+            'enabled_by': '<boolean parameter name>',
+        }})
+
+    Only the standard dialog is affected: the stored value never changes, so
+    batch, modeler and headless runs keep the plain boolean contract and the
+    algorithm stays responsible for ignoring it when the controller is off.
+    """
+
+    def createWidget(self, enabled_by=None, **kwargs):
+        self._enabled_by = enabled_by
+        self._controller = None
+        return super().createWidget(**kwargs)
+
+    def postInitialize(self, wrappers):
+        if self.dialogType != DIALOG_STANDARD or not self._enabled_by:
+            return
+        for wrapper in wrappers:
+            if wrapper is not self and _wrapper_name(wrapper) == self._enabled_by:
+                self._controller = wrapper
+                _safe_connect(wrapper, self._sync_enabled_state)
+                break
+        self._sync_enabled_state()
+
+    def _sync_enabled_state(self, *args):
+        if self._controller is None:
+            return
+        try:
+            enabled = bool(self._controller.parameterValue())
+        except Exception:
+            enabled = True
+        self.widget.setEnabled(enabled)
 
 
 class ParameterSectionHeader(QgsProcessingParameterDefinition):

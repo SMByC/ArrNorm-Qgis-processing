@@ -37,7 +37,7 @@ class _NullFeedback:
 class Normalization:
     def __init__(self, img_ref, img_target, max_iters, conv_threshold, ncp_threshold, neg_to_nodata,
                  mask_ref, mask_ref_nodata, nodata_mask, nodata_mask_value, keep_mask_layer,
-                 output_file, feedback=None):
+                 output_file, feedback=None, report=True, report_dir=None):
         self.img_ref = img_ref
         self.img_target = img_target
         self.max_iters = max_iters
@@ -49,8 +49,17 @@ class Normalization:
         self.keep_mask_layer = keep_mask_layer
         self.output_file = output_file
         self.feedback = feedback if feedback is not None else _NullFeedback()
+        # `report_dir` keeps the figures out of the output directory; the run
+        # workspace is deleted on completion, so it must be a lasting folder.
+        self.report_dir = report_dir
+        self.graphics = bool(report) and radcal.matplotlib_available()
         self.img_ref_clip = img_ref
         self.img_imad = self.img_norm = self.norm_masked = self.mask_file = None
+        # Canonical correlations of every IR-MAD iteration, plotted by the report.
+        self.rhos = []
+        self.convergence_info = {}
+        # Report figures staged in the workspace, published with the output.
+        self.reports = []
 
         try:
             rio.validate_options(max_iters, conv_threshold, ncp_threshold)
@@ -74,7 +83,7 @@ class Normalization:
             if nodata_mask or neg_to_nodata:
                 self.mask_nodata = rio.validate_nodata(self.mask_nodata, self.out_dtype)
             self._artifacts = RunArtifacts(output_file, inputs, self.feedback,
-                                           keep_mask_layer and nodata_mask)
+                                           keep_mask_layer and nodata_mask, self.report_dir)
             self._inputs = inputs
         except (ValueError, RuntimeError, TypeError) as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -87,9 +96,13 @@ class Normalization:
         self.clean()
         try:
             self._artifacts = RunArtifacts(self.output_file, self._inputs, self.feedback,
-                                           self.keep_mask_layer and self.nodata_mask)
+                                           self.keep_mask_layer and self.nodata_mask,
+                                           self.report_dir)
             self.img_ref_clip = self.img_ref
             self.img_imad = self.img_norm = self.norm_masked = self.mask_file = None
+            self.rhos = []
+            self.convergence_info = {}
+            self.reports = []
             rio.check_cancel(self.feedback)
             self.feedback.pushInfo(f'Processing target image: {os.path.basename(self.img_target)}')
             self.feedback.setProgress(0)
@@ -108,7 +121,8 @@ class Normalization:
                 self.feedback.setProgress(97)
                 self.apply_mask(self.img_norm)
             rio.check_cancel(self.feedback)
-            self._artifacts.publish(self.norm_masked or self.img_norm, self.mask_file)
+            self._artifacts.publish(self.norm_masked or self.img_norm, self.mask_file,
+                                    self.reports)
             if self.keep_mask_layer and self.nodata_mask:
                 self.mask_file = self._artifacts.mask_output
             self.feedback.setProgress(100)
@@ -200,7 +214,20 @@ class Normalization:
                   conv_threshold=self.conv_threshold, output=self.img_imad,
                   nodata_ref=self.ref_mask_nodata if self.mask_ref else None,
                   nodata_tgt=self.target_nodata if self.nodata_mask else None,
+                  convergence=self.rhos, convergence_info=self.convergence_info,
                   feedback=self.feedback)
+
+    def report_path(self):
+        """Where the calibration report lands: beside the output, or in `report_dir`.
+
+        The run workspace is deleted on completion, so a report left there would
+        vanish with it. Reports are auxiliary files published only after the
+        normalized raster commits.
+        """
+        if self.report_dir is None:
+            return os.path.splitext(self.output_file)[0] + '_report.png'
+        name = os.path.splitext(os.path.basename(self.output_file))[0] + '_report.png'
+        return os.path.join(self.report_dir, name)
 
     def radcal(self):
         self._step('Radcal process')
@@ -211,6 +238,17 @@ class Normalization:
                     neg_nodata=self.mask_nodata if self.neg_to_nodata else None,
                     nodata_ref=self.ref_mask_nodata if self.mask_ref else None,
                     nodata_tgt=self.target_nodata if self.nodata_mask else None,
+                    graphics=self.graphics, convergence=self.rhos,
+                    report_path=self.report_path() if self.graphics else None,
+                    # Staged in the run workspace: a cancelled or failed run
+                    # must not leave a report describing an output it discarded,
+                    # nor overwrite the report of the previous successful run.
+                    report_staging=(os.path.dirname(self._artifacts.path('report.png'))
+                                    if self.graphics else None),
+                    report_written=self.reports,
+                    report_inputs=(*self._inputs, self.output_file, self._artifacts.mask_output),
+                    report_context={'reference': self.img_ref, 'target': self.img_target,
+                                    'output': self.output_file, 'imad': self.convergence_info},
                     feedback=self.feedback)
 
     def make_mask(self):

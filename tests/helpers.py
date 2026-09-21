@@ -23,6 +23,7 @@ class Feedback:
 
     def __init__(self, cancel_when=None):
         self.messages = []
+        self.formatted_messages = []
         self._cancel_when = cancel_when
         self._canceled = False
         self._progress = 0
@@ -31,6 +32,9 @@ class Feedback:
         self.messages.append(msg)
         if self._cancel_when and self._cancel_when in msg:
             self._canceled = True
+
+    def pushFormattedMessage(self, html, text):
+        self.formatted_messages.append((html, text))
 
     def reportError(self, msg, fatalError=False):
         self.messages.append('ERROR: ' + str(msg))
@@ -113,6 +117,8 @@ def make_normalization(workdir, **kw):
         'nodata_mask': kw.pop('nodata_mask', False),
         'nodata_mask_value': kw.pop('nodata_mask_value', None),
         'keep_mask_layer': kw.pop('keep_mask_layer', False),
+        'report': kw.pop('report', True),
+        'report_dir': kw.pop('report_dir', None),
     }
     assert not kw, kw
     return Normalization(

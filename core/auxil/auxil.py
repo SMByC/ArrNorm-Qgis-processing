@@ -178,6 +178,52 @@ constant in the number of pixels; only the current input block is retained.
         return (slope, self.mean[1] - slope * self.mean[0],
                 float(np.clip(sxy / math.sqrt(sxx * syy), -1, 1)))
 
+    def statistics(self):
+        """Affine-model agreement over every accumulated pair, before storage conversion.
+
+        The accumulated moments already determine these in closed form, so the
+        whole population is described without a second pass or a sample:
+
+            after  RMSE^2 = (Syy - 2 b Sxy + b^2 Sxx) / n
+            before RMSE^2 = (Sxx - 2 Sxy + Syy) / n + (ym - xm)^2
+            variance ratio (calibrated / reference) = b^2 Sxx / Syy
+
+        The mean residual after calibration is omitted deliberately: the fitted
+        line passes through the centroid, so it is exactly zero here and cannot
+        measure accuracy. Use a hold-out subset for that. Near cancellation,
+        report an estimated round-off bound rather than a spurious zero. This is
+        a numerical-resolution estimate, not a statistical confidence interval.
+        """
+        slope, intercept, correlation = self.coefficients()
+        sxx, sxy, syy = self.cross[0, 0], self.cross[0, 1], self.cross[1, 1]
+        difference = float(self.mean[1] - self.mean[0])
+        before = (sxx - 2 * sxy + syy) / self.count + difference ** 2
+        after = (syy - 2 * slope * sxy + slope ** 2 * sxx) / self.count
+        # Allow for both accumulated moment error and subtraction of nearly equal
+        # terms. The deliberately conservative scale grows with population size;
+        # it does not claim correctly rounded residuals below moment resolution.
+        roundoff = 64 * np.finfo(float).eps * self.count
+        before_scale = (abs(sxx) + 2 * abs(sxy) + abs(syy)) / self.count + difference ** 2
+        after_scale = (abs(syy) + 2 * abs(slope * sxy) + slope ** 2 * abs(sxx)) / self.count
+
+        def rmse(value, scale, offset_scale):
+            # Large offsets can also lose precision in accumulated centroids and
+            # evaluation of intercept + slope*x, even with modest centered spread.
+            resolution = (math.sqrt(roundoff * scale) + roundoff * offset_scale) ** 2
+            if np.isfinite(value) and abs(value) <= resolution:
+                return float('nan'), math.sqrt(max(float(value), 0.) + resolution)
+            return (math.sqrt(value) if value > 0 else float('nan')), float('nan')
+
+        before_rmse, before_bound = rmse(before, before_scale, np.abs(self.mean).sum())
+        after_rmse, after_bound = rmse(
+            after, after_scale, abs(self.mean[1]) + abs(slope * self.mean[0]) + abs(intercept))
+        return {'count': int(self.count), 'slope': slope, 'intercept': intercept,
+                'correlation': correlation, 'mean_difference': difference,
+                'rmse_before': before_rmse, 'rmse_after': after_rmse,
+                'rmse_before_bound': before_bound, 'rmse_after_bound': after_bound,
+                'variance_ratio': (float(slope ** 2 * sxx / syy) if syy > 0
+                                   else float('nan'))}
+
 
 # -----------------------------
 # image-image similarity (Fourier log-polar)

@@ -20,7 +20,7 @@ pytest.importorskip('processing.gui.wrappers')
 
 from ArrNorm import classFactory
 from ArrNorm.ArrNorm_algorithm import ArrNormAlgorithm
-from ArrNorm.gui.wrappers import ImageNodataWidgetWrapper
+from ArrNorm.gui.wrappers import DependentBooleanWidgetWrapper, ImageNodataWidgetWrapper
 from ArrNorm.tests.helpers import build_pair, write_raster
 from qgis.PyQt.QtCore import QCoreApplication, QEvent
 
@@ -246,3 +246,79 @@ def test_processing_temporary_output_satisfies_directory_validation(qgis_app, tm
         'OUTPUT': qgis.QgsProcessing.TEMPORARY_OUTPUT,
     }, context, qgis.QgsProcessingFeedback())
     assert Path(result['OUTPUT']).is_file()
+
+
+def test_processing_feedback_embeds_calibration_report(qgis_app, tmp_path):
+    pytest.importorskip('matplotlib')
+    build_pair(tmp_path)
+    algorithm = ArrNormAlgorithm()
+    algorithm.initAlgorithm()
+    feedback = qgis.QgsProcessingFeedback()
+    result = algorithm.processAlgorithm({
+        'IMG_REF': str(tmp_path / 'ref.tif'), 'IMG_TARGET': str(tmp_path / 'tgt.tif'),
+        'OUTPUT': str(tmp_path / 'out.tif'),
+    }, qgis.QgsProcessingContext(), feedback)
+    assert Path(result['OUTPUT']).is_file()
+    log = feedback.htmlLog()
+    assert 'data:image/png;base64,' in log
+    assert 'Radiometric calibration report' in log
+
+
+def test_report_can_be_disabled_entirely(qgis_app, tmp_path):
+    pytest.importorskip('matplotlib')
+    build_pair(tmp_path)
+    algorithm = ArrNormAlgorithm()
+    algorithm.initAlgorithm()
+    feedback = qgis.QgsProcessingFeedback()
+    result = algorithm.processAlgorithm({
+        'IMG_REF': str(tmp_path / 'ref.tif'), 'IMG_TARGET': str(tmp_path / 'tgt.tif'),
+        'OUTPUT': str(tmp_path / 'out.tif'), 'REPORT': False,
+    }, qgis.QgsProcessingContext(), feedback)
+    assert Path(result['OUTPUT']).is_file()
+    assert not list(tmp_path.glob('*_report*.png'))
+    assert 'data:image/png;base64,' not in feedback.htmlLog()
+
+
+def test_report_outside_the_output_folder_is_still_embedded_in_the_log(qgis_app, tmp_path):
+    pytest.importorskip('matplotlib')
+    build_pair(tmp_path)
+    session = tmp_path / 'session'
+    session.mkdir()
+    context = qgis.QgsProcessingContext()
+    context.setTemporaryFolder(str(session))
+    algorithm = ArrNormAlgorithm()
+    algorithm.initAlgorithm()
+    feedback = qgis.QgsProcessingFeedback()
+    result = algorithm.processAlgorithm({
+        'IMG_REF': str(tmp_path / 'ref.tif'), 'IMG_TARGET': str(tmp_path / 'tgt.tif'),
+        'OUTPUT': str(tmp_path / 'out.tif'),
+        'REPORT': True, 'REPORT_BESIDE_OUTPUT': False,
+    }, context, feedback)
+    assert Path(result['OUTPUT']).is_file()
+    assert not list(tmp_path.glob('*_report*.png'))
+    assert [path.name for path in sorted(session.rglob('out_report*.png'))] == [
+        'out_report.png', 'out_report_bands.png']
+    assert 'data:image/png;base64,' in feedback.htmlLog()
+
+
+def test_dependent_checkbox_greys_out_without_changing_its_value(qgis_app):
+    parameter = qgis.QgsProcessingParameterBoolean(
+        'REPORT_BESIDE_OUTPUT', 'Save the report next to the output file', defaultValue=True)
+    ui = DependentBooleanWidgetWrapper(parameter, SimpleNamespace(), enabled_by='REPORT')
+    try:
+        report = {'enabled': False}
+        controller = SimpleNamespace(
+            parameterDefinition=lambda: SimpleNamespace(name=lambda: 'REPORT'),
+            parameterValue=lambda: report['enabled'])
+        ui.postInitialize([ui, controller])
+        assert not ui.widget.isEnabled()
+        # Greying out is presentation only: the stored value never changes, so
+        # batch and modeler runs keep the plain boolean contract.
+        assert ui.value() is True
+        report['enabled'] = True
+        ui._sync_enabled_state()
+        assert ui.widget.isEnabled()
+        assert ui.value() is True
+    finally:
+        ui.widget.deleteLater()
+        ui.deleteLater()

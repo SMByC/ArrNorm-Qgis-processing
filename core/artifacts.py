@@ -1,5 +1,7 @@
 """Run-owned intermediates and atomic, single-file GeoTIFF publication."""
+import errno
 import os
+import shutil
 import tempfile
 
 from .raster_io import check_cancel
@@ -15,13 +17,33 @@ def same_path(first, second):
     return os.path.exists(first) and os.path.exists(second) and os.path.samefile(first, second)
 
 
+def _move(source, destination):
+    """Rename within a filesystem; copy across one (a temp report folder)."""
+    try:
+        os.replace(source, destination)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        shutil.move(source, destination)
+
+
+def validate_report_destination(destination, protected):
+    """Reports must never replace source rasters, dependencies or raster outputs."""
+    if any(same_path(destination, source) for source in protected):
+        raise ArtifactError(f'Calibration report must not overwrite a raster: {destination}')
+
+
 class RunArtifacts:
-    def __init__(self, output, inputs, feedback, keep_mask=False):
+    def __init__(self, output, inputs, feedback, keep_mask=False, report_dir=None):
         self.output = os.path.abspath(output)
         self.mask_output = os.path.splitext(self.output)[0] + '_Mask.tif'
         self.inputs = tuple(inputs)
         self.feedback = feedback
         self.keep_mask = keep_mask
+        # Reports may be kept beside the output (default) or in a caller-chosen
+        # folder that outlives this run's workspace.
+        self.report_dir = (os.path.abspath(report_dir) if report_dir
+                           else os.path.dirname(self.output))
         self._temp = None
         self.validate()
 
@@ -46,7 +68,7 @@ class RunArtifacts:
                                     f'{os.path.dirname(self.output)}: {exc}') from exc
         return os.path.join(self._temp.name, name)
 
-    def publish(self, image, mask=None):
+    def publish(self, image, mask=None, reports=()):
         self.validate()  # repeat after processing, in case a destination alias changed
         check_cancel(self.feedback)
         backup = None
@@ -68,6 +90,21 @@ class RunArtifacts:
             elif mask_published:
                 os.remove(self.mask_output)
             raise
+        # Reports are published only after that commit, so a cancelled or failed
+        # run never leaves a diagnostic describing an output it discarded, and
+        # never overwrites a previous run's report. They are also not worth
+        # failing a committed raster for.
+        for report in reports:
+            destination = os.path.join(self.report_dir, os.path.basename(report))
+            try:
+                validate_report_destination(destination,
+                                            (*self.inputs, self.output, self.mask_output))
+                os.makedirs(self.report_dir, exist_ok=True)
+                _move(report, destination)
+            except (OSError, ArtifactError) as exc:
+                if self.feedback is not None:
+                    self.feedback.reportError(f'Cannot save the calibration report to '
+                                              f'{destination}: {exc}', False)
 
     def clean(self):
         if self._temp is not None:
