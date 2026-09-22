@@ -24,6 +24,12 @@ import scipy.linalg
 import scipy.ndimage as ndii
 from numpy.fft import fft2, fftshift, ifft2
 
+# An older ArrNormPlugin.unload() is still in memory during a live QGIS plugin
+# upgrade. Its Windows path imports `lib` from this newly replaced module before
+# unregistering the provider. No native library is loaded anymore; None lets
+# that old code skip FreeLibrary via its existing exception handler.
+lib = None
+
 
 # -----------------
 # provisional means
