@@ -162,7 +162,7 @@ zip: compile
 		if [ -d "$$d" ]; then cp -rf $$d .pkg_tmp/$(PLUGINNAME)/; fi; \
 	done
 	find .pkg_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" \) -prune -exec rm -rf {} \;
-	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh" -o -name "*.db" -o -name "AGENTS.md" \) -delete
+	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh" -o -name "*.db" -o -name "AGENTS.md" -o -name "codemap.md" \) -delete
 	cd .pkg_tmp && zip -9r ../$(PLUGINNAME).zip $(PLUGINNAME)
 	rm -rf .pkg_tmp
 	@echo "Created package: $(PLUGINNAME).zip"

@@ -34,7 +34,7 @@ _DPI = 200              # render 3x the display resolution for sharp PNGs and Hi
 _MAX_PIXEL_HEIGHT = 12600
 _COLUMN_PAD = 1.08      # shared tight-layout padding, matching the per-band figure
 _SUMMARY_TITLE = 'Radiometric normalization — summary'
-_TOKEN = '__ARRNORM_PNG__'   # placeholder for the base64 payload in the caption
+_PNG_PLACEHOLDER = '__ARRNORM_PNG__'  # replaced with the base64 payload in the caption
 _VALIDATION_SCOPE = ('IR-MAD-selected pixels; the same-scene sample split is descriptive, '
                      'not independent scene validation.')
 
@@ -255,9 +255,9 @@ def _bands_caption(bands, coefficients, validation, *, ranges=None, fit_ranges=N
 
 def _caption(title: str):
     """Heading plus the embedded figure; the log shows the report, not its path."""
-    # A literal token, not str.format: rendered captions may contain braces.
+    # A literal placeholder, not str.format: rendered captions may contain braces.
     return ((f'<b>{escape(title)}</b><br/>'
-             f'<img src="data:image/png;base64,{_TOKEN}" width="{WIDTH}"/>'),
+             f'<img src="data:image/png;base64,{_PNG_PLACEHOLDER}" width="{WIDTH}"/>'),
             title)
 
 
@@ -799,7 +799,7 @@ def push(feedback, item):
     if encoded is None:
         feedback.pushInfo(text)
         return
-    pusher(template.replace(_TOKEN, encoded), text)
+    pusher(template.replace(_PNG_PLACEHOLDER, encoded), text)
 
 
 def _warn(feedback, info, message):
