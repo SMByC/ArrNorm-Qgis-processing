@@ -102,11 +102,13 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         <p><b>IR-MAD convergence threshold</b> (default {DEFAULT_CONV_THRESHOLD:g}) — Stops when the \
         maximum absolute change in canonical correlations (δ) between successive iterations falls \
         below 1 − threshold (δ &lt; {1 - DEFAULT_CONV_THRESHOLD:.3g} by default). Higher values tighten \
-        this numerical stopping tolerance; it is not a confidence level.<br/>
-        <b>Maximum number of iterations</b> (default {DEFAULT_MAX_ITERS}) — An upper limit; converged \
+        this numerical stopping tolerance; it is not a confidence level.</p>
+
+        <p><b>Maximum number of iterations</b> (default {DEFAULT_MAX_ITERS}) — An upper limit; converged \
         runs stop earlier. If the limit is reached first, the iteration with the smallest δ is \
-        used, but the run is not marked as converged.<br/>
-        <b>No-change pixel probability threshold</b> (default 0.95) — Determines which pixels are used for \
+        used, but the run is not marked as converged.</p>
+
+        <p><b>No-change pixel probability threshold</b> (default 0.95) — Determines which pixels are used for \
         radiometric calibration. After IR-MAD, each pixel receives a chi-square-based no-change \
         score; only pixels above this threshold are included in the per-band regression. Higher values \
         select fewer pixels with higher model-based no-change scores, but may reduce calibration \
@@ -198,7 +200,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterBoolean(
                 self.MASK_REF,
                 self.tr('Mask nodata in reference image before processing'),
-                defaultValue=False,
+                defaultValue=True,
                 optional=True
             )
         )
