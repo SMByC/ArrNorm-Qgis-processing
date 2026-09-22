@@ -154,6 +154,41 @@ def test_headless_parameter_values_and_qgsproperty(qgis_app, tmp_path, monkeypat
     assert result == {'OUTPUT': str(tmp_path / 'out.tif')}
 
 
+@pytest.mark.parametrize('overrides,expected', [
+    ({}, (50, .999)),
+    ({'MAX_ITERS': None, 'CONV_THRESHOLD': None}, (50, .999)),
+    ({'MAX_ITERS': '', 'CONV_THRESHOLD': ''}, (50, .999)),
+    ({'MAX_ITERS': 25, 'CONV_THRESHOLD': .99}, (25, .99)),
+    ({'MAX_ITERS': 12, 'CONV_THRESHOLD': .995}, (12, .995)),
+])
+def test_convergence_defaults_match_dialog_and_headless_execution(
+        qgis_app, tmp_path, monkeypatch, overrides, expected):
+    import ArrNorm.ArrNorm_algorithm as module
+
+    build_pair(tmp_path, rows=10, cols=10)
+    observed = {}
+
+    class Capture:
+        def __init__(self, **kwargs):
+            observed.update(kwargs)
+
+        def run(self):
+            return observed['output_file']
+
+    monkeypatch.setattr(module, 'Normalization', Capture)
+    algorithm = ArrNormAlgorithm()
+    algorithm.initAlgorithm()
+    assert algorithm.parameterDefinition('MAX_ITERS').defaultValue() == 50
+    assert algorithm.parameterDefinition('CONV_THRESHOLD').defaultValue() == .999
+    assert algorithm.parameterDefinition('NCP_THRESHOLD').defaultValue() == .95
+    algorithm.processAlgorithm({
+        'IMG_REF': str(tmp_path / 'ref.tif'), 'IMG_TARGET': str(tmp_path / 'tgt.tif'),
+        'OUTPUT': str(tmp_path / 'out.tif'), 'REPORT': False, **overrides,
+    }, qgis.QgsProcessingContext(), qgis.QgsProcessingFeedback())
+    assert (observed['max_iters'], observed['conv_threshold']) == expected
+    assert observed['ncp_threshold'] == .95
+
+
 def test_processing_cancel_returns_no_output(qgis_app, tmp_path):
     build_pair(tmp_path)
 

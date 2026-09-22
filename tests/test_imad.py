@@ -8,6 +8,23 @@ from ArrNorm.tests.helpers import Feedback, build_pair, write_raster
 from osgeo import gdal
 
 
+def test_default_stopping_policy_uses_point001_tolerance_and_fifty_iteration_cap(tmp_path):
+    build_pair(tmp_path)
+    feedback = Feedback()
+    history, info = [], {}
+    result = iMad.main(str(tmp_path / 'ref.tif'), str(tmp_path / 'tgt.tif'),
+                       output=str(tmp_path / 'mad.tif'), feedback=feedback,
+                       convergence=history, convergence_info=info)
+    assert result == str(tmp_path / 'mad.tif')
+    assert any('or 50 iterations' in message for message in feedback.messages)
+    assert info['delta_threshold'] == pytest.approx(.001)
+    assert info['termination'] == 'converged'
+    changes = np.max(np.abs(np.diff(history, axis=0)), axis=1)
+    assert changes[-1] < .001
+    assert np.all(changes[:-1] >= .001)
+    assert info['iterations'] < 50
+
+
 @pytest.mark.parametrize('nodata', [-9999.0, np.nan])
 def test_partial_band_gap_excluded_before_covariance(tmp_path, monkeypatch, nodata):
     build_pair(tmp_path, tgt_nodata=nodata,

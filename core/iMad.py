@@ -40,6 +40,11 @@ class _FatalInputError(QgsProcessingException):
 # while keeping peak memory bounded (256 * cols * 2*bands * 8 bytes).
 DEFAULT_BLOCK_ROWS = 256
 
+# Shared with Processing: the tolerance and iteration cap follow Canty's
+# reference implementation. See README.md for the rationale and references.
+DEFAULT_MAX_ITERS = 50
+DEFAULT_CONV_THRESHOLD = 0.999
+
 
 _iter_row_blocks = rio.row_blocks
 
@@ -67,11 +72,16 @@ def _valid_rows(tile, nodata):
     return rio.valid_rows(tile, nodata)
 
 
-def main(img_ref, img_target, max_iters=30, conv_threshold=0.99, band_pos=None, dims=None,
+def main(img_ref, img_target, max_iters=DEFAULT_MAX_ITERS,
+         conv_threshold=DEFAULT_CONV_THRESHOLD, band_pos=None, dims=None,
          graphics=False, ref_text='', block_rows=DEFAULT_BLOCK_ROWS, feedback=None, *,
          output_dir=None, nodata_ref=None, nodata_tgt=None, output=None,
          convergence=None, convergence_info=None):
     """Write the MAD variates and chi-square band; return the written path.
+
+    Defaults stop at a maximum inter-iteration correlation change below 0.001,
+    with a 50-iteration cap. This controls numerical convergence, not confidence
+    or guaranteed radiometric accuracy.
 
     A list passed as `convergence` receives the canonical correlations of every
     completed iteration, which the calibration report plots. The return value

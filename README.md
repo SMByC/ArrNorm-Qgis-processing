@@ -35,11 +35,15 @@ Under the null hypothesis of *no change*, the standardized MAD variates
 
 follow a chi-squared distribution with *K* degrees of freedom. The **no-change probability** NCP = P(χ² ≥ observed) is then used as a pixel weight for the next iteration: stable pixels get weight ≈ 1, changed pixels get weight ≈ 0.
 
-The **iterative reweighting** loop drives the covariance statistics toward being estimated entirely from invariant ground, progressively suppressing changed pixels. Two independent thresholds govern the pipeline:
+The **iterative reweighting** loop drives the covariance statistics toward being estimated entirely from invariant ground, progressively suppressing changed pixels. Two independent thresholds and an iteration cap govern the pipeline:
 
-- **Convergence level** τ_conv: iteration stops when δ = max|ρ_new − ρ_old| falls below 1 − τ_conv, or when the maximum number of iterations is reached. Higher values enforce tighter convergence (e.g. τ_conv = 0.99 stops when δ < 0.01). When the iteration limit is reached, the result with the smallest δ is selected automatically.
+- **Convergence level** τ_conv (default **0.999**): iteration stops when δ = max|ρ_new − ρ_old| falls below 1 − τ_conv (**δ < 0.001** by default). Higher values tighten the numerical stopping tolerance; this is not a confidence level.
 
-- **No-change probability threshold** τ_ncp: after IR-MAD converges, only pixels whose no-change probability NCP exceeds τ_ncp are admitted to the per-band orthogonal regression in RadCal. Higher values select fewer but more reliable invariant pixels.
+- **Maximum iterations** (default **50**): a ceiling, not a fixed number of iterations. Converged runs stop earlier. If the limit is reached first, the result with the smallest δ is selected, but the run is not marked as converged.
+
+- **No-change probability threshold** τ_ncp (default **0.95**): after IR-MAD, only pixels whose chi-square-based no-change score NCP exceeds τ_ncp are admitted to the per-band orthogonal regression in RadCal. Higher values select fewer pixels with higher model-based no-change scores, but may reduce calibration coverage. The 0.95 default follows Canty and Nielsen (2008) [[3]](#references).
+
+**Why these defaults?** The 0.001 correlation-change tolerance and 50-iteration cap follow Canty's reference Python implementation [[2]](#references). This tolerance corresponds to ArrNorm's **0.999** convergence level. The papers provide supporting context: Canty and Nielsen (2008) report satisfactory convergence usually within 20–30 iterations [[3]](#references), while Nielsen (2007) describes correlation-change stopping and its data-dependent behaviour [[4]](#references). These are practical numerical defaults, not a guarantee of normalization accuracy.
 
 ### 3. RadCal — radiometric calibration
 
@@ -59,9 +63,15 @@ Orthogonal regression is used because both images contain measurement noise, so 
 
 ## References
 
-[1] M. J. Canty (2014): *Image Analysis, Classification and Change Detection in Remote Sensing, with Algorithms for ENVI/IDL and Python* (Third Revised Edition). Taylor & Francis / CRC Press.
+[1] M. J. Canty (2014): *Image Analysis, Classification and Change Detection in Remote Sensing, with Algorithms for ENVI/IDL and Python* (Third Revised Edition). Taylor & Francis / CRC Press. https://doi.org/10.1201/b17074
 
 The IR-MAD algorithm and the radiometric normalization procedure implemented here are described in detail in Chapter 9 of that book. The iterative reweighting scheme, the use of the chi-squared no-change probability as pixel weights, and the orthogonal regression calibration all follow Canty's formulation directly.
+
+[2] Canty, M. J. (n.d.). *iMad.py* [Python source code]. CRC4Docker, GitHub. https://github.com/mortcanty/CRC4Docker/blob/master/src/scripts/iMad.py (retrieved September 21, 2026).
+
+[3] Canty, M. J., & Nielsen, A. A. (2008). Automatic radiometric normalization of multitemporal satellite imagery with the iteratively re-weighted MAD transformation. *Remote Sensing of Environment, 112*(3), 1025–1036. https://doi.org/10.1016/j.rse.2007.07.013
+
+[4] Nielsen, A. A. (2007). The regularized iteratively reweighted MAD method for change detection in multi- and hyperspectral data. *IEEE Transactions on Image Processing, 16*(2), 463–478. https://doi.org/10.1109/TIP.2006.888195
 
 ## About
 

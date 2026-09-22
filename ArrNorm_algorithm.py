@@ -28,6 +28,7 @@ from qgis.core import (Qgis, QgsProcessingAlgorithm, QgsProcessingException,
                        QgsProcessingParameterRasterLayer, QgsProcessingParameterBoolean)
 
 from ArrNorm.core.arrnorm import Normalization
+from ArrNorm.core.iMad import DEFAULT_CONV_THRESHOLD, DEFAULT_MAX_ITERS
 
 
 class ArrNormAlgorithm(QgsProcessingAlgorithm):
@@ -78,7 +79,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         should provide a basic description about what the algorithm does and the
         parameters and outputs associated with it.
         """
-        html_help = '''
+        html_help = f'''
         <p>ArrNorm applies relative radiometric normalization to a <b>target image</b> using a \
         <b>reference image</b>. By leveraging the linear and affine invariance of the MAD \
         transformation, the IR-MAD algorithm identifies spectrally invariant pixels between the \
@@ -98,16 +99,18 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         radiometric errors across the entire normalized output. Masking nodata before processing \
         removes these outliers and yields a more accurate normalization.</p>
 
-        <b>IR-MAD convergence threshold</b> (default 0.99) — Controls when the iterative algorithm stops. \
-        The iteration halts when the maximum change in canonical correlations (δ) between successive \
-        iterations falls below 1 − threshold (e.g. 0.99 → δ &lt; 0.01). Higher values enforce tighter \
-        convergence, yielding more stable no-change weights. Use 0.99 for most cases; 0.999 for \
-        maximum precision.<br/>
+        <p><b>IR-MAD convergence threshold</b> (default {DEFAULT_CONV_THRESHOLD:g}) — Stops when the \
+        maximum absolute change in canonical correlations (δ) between successive iterations falls \
+        below 1 − threshold (δ &lt; {1 - DEFAULT_CONV_THRESHOLD:.3g} by default). Higher values tighten \
+        this numerical stopping tolerance; it is not a confidence level.<br/>
+        <b>Maximum number of iterations</b> (default {DEFAULT_MAX_ITERS}) — An upper limit; converged \
+        runs stop earlier. If the limit is reached first, the iteration with the smallest δ is \
+        used, but the run is not marked as converged.<br/>
         <b>No-change pixel probability threshold</b> (default 0.95) — Determines which pixels are used for \
-        radiometric calibration. After IR-MAD converges, each pixel receives a chi-square no-change \
-        probability; only pixels above this threshold are included in the per-band regression. Higher \
-        values select fewer but more reliable invariant pixels. If set too high, the algorithm may fail \
-        due to insufficient no-change pixels.</p>
+        radiometric calibration. After IR-MAD, each pixel receives a chi-square-based no-change \
+        score; only pixels above this threshold are included in the per-band regression. Higher values \
+        select fewer pixels with higher model-based no-change scores, but may reduce calibration \
+        coverage. If set too high, the algorithm may fail due to insufficient no-change pixels.</p>
 
         <p><b>Report</b> — Renders two diagnostic figures: a summary (agreement with the \
         reference per band, the applied correction, where the no-change pixels are, and IR-MAD \
@@ -292,7 +295,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 self.MAX_ITERS,
                 self.tr('Maximum number of iterations'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
-                defaultValue=25,
+                defaultValue=DEFAULT_MAX_ITERS,
                 minValue=1,
                 optional=True
             )
@@ -304,7 +307,7 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
                 self.CONV_THRESHOLD,
                 self.tr('IR-MAD convergence threshold'),
                 type=Qgis.ProcessingNumberParameterType.Double,
-                defaultValue=0.99,
+                defaultValue=DEFAULT_CONV_THRESHOLD,
                 minValue=0,
                 maxValue=1,
                 optional=True
@@ -422,9 +425,9 @@ class ArrNormAlgorithm(QgsProcessingAlgorithm):
         arrnorm = Normalization(
             img_ref=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_REF, context)),
             img_target=get_inputfilepath(self.parameterAsRasterLayer(parameters, self.IMG_TARGET, context)),
-            max_iters=(25 if parameters.get(self.MAX_ITERS) in (None, '') else
+            max_iters=(DEFAULT_MAX_ITERS if parameters.get(self.MAX_ITERS) in (None, '') else
                        self.parameterAsInt(parameters, self.MAX_ITERS, context)),
-            conv_threshold=(0.99 if parameters.get(self.CONV_THRESHOLD) in (None, '') else
+            conv_threshold=(DEFAULT_CONV_THRESHOLD if parameters.get(self.CONV_THRESHOLD) in (None, '') else
                             self.parameterAsDouble(parameters, self.CONV_THRESHOLD, context)),
             ncp_threshold=(0.95 if parameters.get(self.NCP_THRESHOLD) in (None, '') else
                            self.parameterAsDouble(parameters, self.NCP_THRESHOLD, context)),
